@@ -37,3 +37,10 @@ jobs:
           printf '%s\n' 'must retain' > .venv/sentinel.txt
           bash ./run.sh --check
           test "$(cat .venv/sentinel.txt)" = 'must retain'
+
+      - name: Test import dedup and validate browser JavaScript
+        if: matrix.python-version == '3.12'
+        run: |
+          .venv/bin/python -m pip install --disable-pip-version-check --index-url https://pypi.tuna.tsinghua.edu.cn/simple -e '.[test]'
+          .venv/bin/python -m pytest -q
+          node --check src/reference_topology/static/app.js
