@@ -1,0 +1,31 @@
+name: Windows launcher smoke test
+
+on:
+  pull_request:
+  push:
+    branches:
+      - feat/local-reference-workbench
+
+jobs:
+  windows-launcher:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Parse PowerShell launcher
+        shell: powershell
+        run: |
+          $tokens = $null
+          $errors = $null
+          [System.Management.Automation.Language.Parser]::ParseFile((Resolve-Path .\run.ps1).Path, [ref]$tokens, [ref]$errors) | Out-Null
+          if ($errors.Count -gt 0) {
+            $errors | ForEach-Object { Write-Error $_.ToString() }
+            throw "run.ps1 has PowerShell syntax errors"
+          }
+      - name: Run launcher startup check
+        shell: powershell
+        run: |
+          .\run.ps1 --check
+          if ($LASTEXITCODE -ne 0) { throw "run.ps1 startup check failed" }
