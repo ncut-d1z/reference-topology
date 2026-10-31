@@ -258,7 +258,11 @@ def test_graceful_http_shutdown_exits_server_and_preserves_sqlite_queue(tmp_path
                 break
             except (OSError, URLError):
                 time.sleep(0.1)
-        assert session is not None, "Server failed to start"
+        if session is None:
+            diagnostics = ""
+            if process.poll() is not None:
+                diagnostics = process.communicate(timeout=5)[0]
+            raise AssertionError(f"Server failed to start (exit={process.poll()}):\\n{diagnostics}")
         info, cookie = session
         request = Request(base + "/api/shutdown", data=b"{}", method="POST", headers={
             "Content-Type": "application/json",
