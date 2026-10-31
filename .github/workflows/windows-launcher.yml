@@ -30,6 +30,21 @@ jobs:
             $errors | ForEach-Object { Write-Host $_.ToString() }
             throw 'PowerShell syntax errors'
           }
+      - name: Native stderr is not a PowerShell failure
+        shell: powershell
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $tokens = $null
+          $errors = $null
+          $ast = [System.Management.Automation.Language.Parser]::ParseFile((Resolve-Path .\run.ps1).Path, [ref]$tokens, [ref]$errors)
+          $definition = $ast.FindAll({ param($node) $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -eq 'Invoke-NativeLogged' }, $true) | Select-Object -First 1
+          if (-not $definition) { throw 'Missing Invoke-NativeLogged' }
+          . ([scriptblock]::Create($definition.Extent.Text))
+          $pythonExe = (Get-Command python).Path
+          $successCode = Invoke-NativeLogged $pythonExe @('-c', 'import sys; sys.stderr.write(chr(65)); sys.exit(0)')
+          if ($successCode -ne 0) { throw 'Benign stderr was treated as failure' }
+          $failureCode = Invoke-NativeLogged $pythonExe @('-c', 'import sys; sys.stderr.write(chr(66)); sys.exit(17)')
+          if ($failureCode -ne 17) { throw 'Native error exit code was lost' }
       - name: Start twice with installed interpreter
         shell: powershell
         env:
