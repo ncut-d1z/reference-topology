@@ -14,18 +14,27 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
-      - name: Parse PowerShell launcher
+      - name: Check Windows PowerShell 5.1 syntax and ASCII
         shell: powershell
         run: |
+          $bytes = [System.IO.File]::ReadAllBytes((Resolve-Path .\run.ps1).Path)
+          if ($bytes | Where-Object { $_ -gt 127 }) { throw 'run.ps1 must be ASCII for PowerShell 5.1' }
           $tokens = $null
           $errors = $null
           [System.Management.Automation.Language.Parser]::ParseFile((Resolve-Path .\run.ps1).Path, [ref]$tokens, [ref]$errors) | Out-Null
           if ($errors.Count -gt 0) {
-            $errors | ForEach-Object { Write-Error $_.ToString() }
-            throw "run.ps1 has PowerShell syntax errors"
+            $errors | ForEach-Object { Write-Host $_.ToString() }
+            throw 'run.ps1 syntax errors'
           }
-      - name: Run launcher startup check
+      - name: First launch and repeat startup on Windows PowerShell 5.1
         shell: powershell
         run: |
           .\run.ps1 --check
-          if ($LASTEXITCODE -ne 0) { throw "run.ps1 startup check failed" }
+          if ($LASTEXITCODE -ne 0) { throw 'first check failed' }
+          .\run.ps1 --check
+          if ($LASTEXITCODE -ne 0) { throw 'repeat check failed' }
+      - name: Check PowerShell 7
+        shell: pwsh
+        run: |
+          .\run.ps1 --check
+          if ($LASTEXITCODE -ne 0) { throw 'pwsh check failed' }
