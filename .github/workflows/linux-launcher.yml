@@ -1,0 +1,31 @@
+name: Linux launcher smoke test
+
+on:
+  pull_request:
+  push:
+    branches:
+      - feat/local-reference-workbench
+
+jobs:
+  linux-launcher:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Check bash syntax and default TUNA index
+        run: |
+          bash -n run.sh
+          grep -Fq 'https://pypi.tuna.tsinghua.edu.cn/simple' run.sh
+      - name: First launch and repeat startup
+        run: |
+          bash run.sh --check
+          bash run.sh --check
+      - name: Keep an incompatible environment intact
+        run: |
+          mv .venv .venv-py312
+          mkdir .venv
+          printf '%s\n' 'original environment' > .venv/sentinel.txt
+          bash run.sh --check
+          test "$(cat .venv/sentinel.txt)" = 'original environment'
