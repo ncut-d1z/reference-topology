@@ -47,6 +47,35 @@ class StorageTests(unittest.TestCase):
             self.assertEqual(con.execute("PRAGMA journal_mode").fetchone()[0], "wal")
             self.assertEqual(con.execute("PRAGMA foreign_key_check").fetchall(), [])
 
+
+    def test_jobs_overview_does_not_hide_running_or_finished_behind_recent_queued(self):
+        asset = self.asset("queue")
+        created = []
+        for index in range(130):
+            job = self.store.create_job("parse", asset_id=asset["file_id"],
+                paper_id=asset["paper_id"], request_key=f"jobs-test-{index}",
+                work_key=f"jobs-work-{index}", input_data={"number": index})
+            created.append(job)
+        first = self.store.claim_job()
+        self.assertEqual(first["id"], created[0]["id"])
+        self.store.update_job(first["id"], lease_token=first["lease_token"],
+                              status="succeeded", result={"ok": True})
+        running = self.store.claim_job()
+        self.assertEqual(running["id"], created[1]["id"])
+        overview = self.store.jobs_overview(100)
+        self.assertEqual(overview["total"], 130)
+        self.assertEqual(overview["counts"]["succeeded"], 1)
+        self.assertEqual(overview["counts"]["running"], 1)
+        self.assertEqual(overview["counts"]["queued"], 128)
+        self.assertTrue(overview["truncated"])
+        ids = {item["id"] for item in overview["items"]}
+        self.assertIn(first["id"], ids)
+        self.assertIn(running["id"], ids)
+        self.assertIn(created[2]["id"], ids)
+        self.assertIn(created[-1]["id"], ids)
+        self.assertEqual(len(ids), len(overview["items"]))
+        self.assertLessEqual(len(ids), 100)
+
     def test_content_deduplication_locations_and_replaced_path_are_separate(self):
         first = self.asset("one", content="same", uri="file:///a.pdf")
         duplicate = self.asset("two", content="same", uri="file:///b.pdf")
