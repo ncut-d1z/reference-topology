@@ -168,7 +168,15 @@ class FileService:
                     self.store.set_location_status(location["id"], "changed")
                     last_error = FileError("content_changed", "原位置已经是不同内容，请重新登记或绑定", 409)
                     continue
-                self.store.set_location_status(location["id"], "available")
+                # Reading or opening a known-good PDF must not require a
+                # SQLite writer lock. With many parser jobs, gratuitous writes
+                # here can make ordinary PDF GET requests fail with SQLITE_BUSY.
+                if location["status"] != "available":
+                    try:
+                        self.store.set_location_status(location["id"], "available")
+                    except Exception:
+                        temporary.unlink(missing_ok=True)
+                        raise
                 return temporary, location
             except FileNotFoundError:
                 self.store.set_location_status(location["id"], "missing")
