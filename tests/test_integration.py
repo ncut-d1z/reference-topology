@@ -202,3 +202,80 @@ def test_completed_publication_cannot_be_reported_as_cancelled(tmp_path, monkeyp
             assert not refs or response.json()["status"] in {"succeeded", "partial"}, response.text
         finally:
             release.set()
+
+def test_pdf_snapshot_does_not_need_a_writer_lock_for_available_file(tmp_path):
+    settings, root = _settings(tmp_path)
+    data = _pdf()
+    (root / "already-available.pdf").write_bytes(data)
+    app = create_app(settings, run_worker=False)
+    item = app.state.files.register(settings.roots()[0]["id"], "already-available.pdf")
+    # A different SQLite connection owns the only writer reservation.
+    # Opening a verified PDF must remain a read operation.
+    with app.state.store.connection() as lock:
+        lock.execute("BEGIN IMMEDIATE")
+        snapshot, location = app.state.files.snapshot(item["file_id"])
+        try:
+            assert snapshot.read_bytes() == data
+            assert location["status"] == "available"
+        finally:
+            snapshot.unlink(missing_ok=True)
+            lock.rollback()
+
+
+def test_graceful_http_shutdown_exits_server_and_preserves_sqlite_queue(tmp_path):
+    import socket
+    from urllib.error import URLError
+    from urllib.request import Request, urlopen
+
+    settings, root = _settings(tmp_path)
+    # A queued entry created before launch must survive a normal shutdown.
+    from reference_topology.storage import Store
+    store = Store(settings.data_dir / "reference_topology.sqlite3")
+    with socket.socket() as sock:
+        sock.bind(("127.0.0.1", 0))
+        port = sock.getsockname()[1]
+    environment = os.environ.copy()
+    environment["PYTHONPATH"] = str(Path(__file__).resolve().parents[1] / "src")
+    process = subprocess.Popen([sys.executable, "-m", "reference_topology", "--data-dir",
+                                str(settings.data_dir), "--port", str(port)],
+                               env=environment, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                               text=True)
+    base = f"http://127.0.0.1:{port}"
+    try:
+        session = None
+        for _ in range(80):
+            if process.poll() is not None:
+                break
+            try:
+                with urlopen(base + "/api/session", timeout=1) as response:
+                    session = (json.loads(response.read()), response.headers.get("Set-Cookie", ""))
+                break
+            except (OSError, URLError):
+                time.sleep(0.1)
+        assert session is not None, "Server failed to start"
+        info, cookie = session
+        request = Request(base + "/api/shutdown", data=b"{}", method="POST", headers={
+            "Content-Type": "application/json",
+            "Origin": base,
+            "X-CSRF-Token": info["csrf_token"],
+            "Cookie": cookie.split(";", 1)[0],
+        })
+        with urlopen(request, timeout=5) as response:
+            assert response.status == 202
+            assert json.loads(response.read())["status"] == "stopping"
+        process.wait(timeout=20)
+        assert process.returncode == 0, "The CLI did not shut down normally"
+        reopened = Store(settings.data_dir / "reference_topology.sqlite3")
+        with reopened.connection() as con:
+            assert con.execute("PRAGMA integrity_check").fetchone()[0] == "ok"
+            assert con.execute("PRAGMA foreign_key_check").fetchall() == []
+    finally:
+        if process.poll() is None:
+            process.terminate()
+            try:
+                process.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                process.kill()
+                process.wait(timeout=5)
+        if process.stdout:
+            process.stdout.close()
