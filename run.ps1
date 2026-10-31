@@ -42,18 +42,35 @@ function Test-Dependencies([string]$Executable) {
     }
 }
 
-function Test-ReadyEnvironment([string]$Executable) {
-    if (Test-Dependencies $Executable) { return $true }
-    Write-Host "Installing dependencies for $Executable from $env:PIP_INDEX_URL"
+# PowerShell 5.1 wraps native stderr as NativeCommandError when merged with
+# stdout (2>&1). Keep native stdout live and render stderr as plain text after
+# the process exits. Exit codes, not stderr text, determine success/failure.
+function Invoke-NativeLogged([string]$Executable, [string[]]$CommandArgs) {
+    $StderrFile = [System.IO.Path]::GetTempFileName()
     $OldPreference = $ErrorActionPreference
     try {
         $ErrorActionPreference = 'Continue'
-        & $Executable -m pip install --index-url $env:PIP_INDEX_URL -e $PSScriptRoot 2>&1 | Out-Host
-        $InstallSucceeded = ($LASTEXITCODE -eq 0)
-    } catch {
-        $InstallSucceeded = $false
+        & $Executable @CommandArgs 2> $StderrFile | Out-Host
+        $ExitCode = $LASTEXITCODE
+        if ((Get-Item -LiteralPath $StderrFile).Length -gt 0) {
+            Get-Content -LiteralPath $StderrFile | ForEach-Object { Write-Host $_ }
+        }
+        return [int]$ExitCode
     } finally {
         $ErrorActionPreference = $OldPreference
+        Remove-Item -LiteralPath $StderrFile -Force -ErrorAction SilentlyContinue
+    }
+}
+
+function Test-ReadyEnvironment([string]$Executable) {
+    if (Test-Dependencies $Executable) { return $true }
+    Write-Host "Installing dependencies for $Executable from $env:PIP_INDEX_URL"
+    try {
+        $InstallExitCode = Invoke-NativeLogged $Executable @('-m', 'pip', 'install', '--disable-pip-version-check', '--index-url', $env:PIP_INDEX_URL, '-e', $PSScriptRoot)
+        $InstallSucceeded = ($InstallExitCode -eq 0)
+    } catch {
+        Write-Host "Unable to run pip with $Executable : $($_.Exception.Message)"
+        $InstallSucceeded = $false
     }
     if ($InstallSucceeded -and (Test-Dependencies $Executable)) { return $true }
     Write-Host "Dependencies unavailable for $Executable; trying another installed Python."
@@ -131,15 +148,12 @@ if (-not $PythonExe) {
             }
         }
         Write-Host "Trying Python $VersionTag in $Environment (existing environments are retained)"
-        $OldPreference = $ErrorActionPreference
         try {
-            $ErrorActionPreference = 'Continue'
-            & $Interpreter -m venv $Environment 2>&1 | Out-Host
-            $Created = ($LASTEXITCODE -eq 0)
+            $CreateExitCode = Invoke-NativeLogged $Interpreter @('-m', 'venv', $Environment)
+            $Created = ($CreateExitCode -eq 0)
         } catch {
+            Write-Host "Unable to create virtual environment: $($_.Exception.Message)"
             $Created = $false
-        } finally {
-            $ErrorActionPreference = $OldPreference
         }
         if (-not $Created) { continue }
         $Candidate = Join-Path $Environment 'Scripts\python.exe'
