@@ -139,7 +139,7 @@ def create_app(settings: Settings | None = None, *, run_worker: bool = True) -> 
 
     @app.get("/")
     def home():
-        return HTMLResponse(homepage, headers={"Cache-Control": "no-store"})
+        return HTMLResponse(homepage)  # LocalAccessMiddleware already sets no-store.
 
     @app.get("/api/session")
     def session():
