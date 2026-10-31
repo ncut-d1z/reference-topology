@@ -164,15 +164,22 @@ def create_app(settings: Settings | None = None, *, run_worker: bool = True) -> 
     @app.post("/api/files/register", status_code=202)
     def register(body: Registration):
         items, errors = [], []
-        for index, relative in enumerate(dict.fromkeys(body.paths)):
+        paths = list(dict.fromkeys(body.paths))
+        for index, relative in enumerate(paths):
             try:
                 item = files.register(body.root_id, relative)
+                # SHA-256 is the authoritative PDF identity. Previously imported
+                # contents gain another location, not another paper or parse task.
                 request_key = f"{body.request_key}:{index}" if body.request_key else None
-                job = runner.enqueue(item["file_id"], item["paper_id"], request_key=request_key)
-                items.append({**item, "job_id": job["id"], "name": Path(relative).name})
+                job = runner.enqueue(item["file_id"], item["paper_id"], request_key=request_key) if item["created"] else None
+                items.append({**item, "duplicate": not item["created"],
+                              "job_id": job["id"] if job else None, "name": Path(relative).name})
             except (StoreError, FileError, OSError) as error:
                 errors.append({"path": relative, "code": getattr(error, "code", "file_unavailable"), "message": str(error)})
-        return {"items": items, "errors": errors}
+        return {"items": items, "errors": errors,
+                "summary": {"added": sum(bool(item["created"]) for item in items),
+                            "duplicates": sum(bool(item["duplicate"]) for item in items) + len(body.paths) - len(paths),
+                            "failed": len(errors)}}
 
     @app.post("/api/files/upload", status_code=202)
     async def upload(files_input: list[UploadFile] = File(alias="files")):
@@ -194,15 +201,19 @@ def create_app(settings: Settings | None = None, *, run_worker: bool = True) -> 
                             raise FileError("file_too_large", "PDF 超过配置大小上限", 413)
                         stream.write(chunk)
                 item = await run_in_threadpool(files.register_upload, temporary, uploaded.filename)
-                job = await run_in_threadpool(runner.enqueue, item["file_id"], item["paper_id"])
-                items.append({**item, "job_id": job["id"], "name": uploaded.filename})
+                job = await run_in_threadpool(runner.enqueue, item["file_id"], item["paper_id"]) if item["created"] else None
+                items.append({**item, "duplicate": not item["created"],
+                              "job_id": job["id"] if job else None, "name": uploaded.filename})
             except (StoreError, FileError, OSError) as error:
                 errors.append({"name": uploaded.filename, "code": getattr(error, "code", "file_unavailable"), "message": str(error)})
             finally:
                 await uploaded.close()
                 if temporary:
                     temporary.unlink(missing_ok=True)
-        return {"items": items, "errors": errors}
+        return {"items": items, "errors": errors,
+                "summary": {"added": sum(bool(item["created"]) for item in items),
+                            "duplicates": sum(bool(item["duplicate"]) for item in items),
+                            "failed": len(errors)}}
 
     @app.api_route("/api/files/{file_id}/content", methods=["GET", "HEAD"])
     def content(file_id: str):
