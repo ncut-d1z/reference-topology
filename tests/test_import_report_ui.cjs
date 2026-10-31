@@ -101,7 +101,7 @@ async function main() {
   const csv = await csvBlob.text();
   const csvBytes = new Uint8Array(await csvBlob.arrayBuffer());
   assert.deepEqual(Array.from(csvBytes.slice(0, 3)), [0xEF, 0xBB, 0xBF], "CSV should contain UTF-8 BOM for Excel");
-  for (const expected of ["本次文件", "原有文件 URI", "copies/new.pdf",
+  for (const expected of ["本次文件", "已有文件 URI", "copies/new.pdf",
     "copies/repeated.pdf", "file:///C:/Papers/original.pdf",
     "invalid/not-really.pdf", "invalid_pdf"]) {
     assert(csv.includes(expected), "CSV missing " + expected);
