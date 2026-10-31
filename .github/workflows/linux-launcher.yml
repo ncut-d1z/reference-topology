@@ -37,6 +37,7 @@ jobs:
           node --check src/reference_topology/static/app.js
           node tests/test_import_ui.cjs
           node tests/test_import_report_ui.cjs
+          node tests/test_jobs_ui.cjs
       - name: Preserve unrelated virtual environment
         run: |
           version_tag=$(.venv/bin/python -c 'import sys; print("%d%d" % sys.version_info[:2])')
@@ -57,3 +58,4 @@ jobs:
           node --check src/reference_topology/static/app.js
           node tests/test_import_ui.cjs
           node tests/test_import_report_ui.cjs
+          node tests/test_jobs_ui.cjs
