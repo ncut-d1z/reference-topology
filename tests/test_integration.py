@@ -228,9 +228,15 @@ def test_graceful_http_shutdown_exits_server_and_preserves_sqlite_queue(tmp_path
     from urllib.request import Request, urlopen
 
     settings, root = _settings(tmp_path)
-    # A queued entry created before launch must survive a normal shutdown.
+    # Preserve a backlog of jobs across graceful stop. No row may disappear.
     from reference_topology.storage import Store
     store = Store(settings.data_dir / "reference_topology.sqlite3")
+    job_ids = []
+    for index in range(30):
+        row = store.create_job("parse", request_key=f"shutdown-{index}",
+                               work_key=f"shutdown-work-{index}",
+                               input_data={"test": index})
+        job_ids.append(row["id"])
     with socket.socket() as sock:
         sock.bind(("127.0.0.1", 0))
         port = sock.getsockname()[1]
@@ -269,6 +275,9 @@ def test_graceful_http_shutdown_exits_server_and_preserves_sqlite_queue(tmp_path
         with reopened.connection() as con:
             assert con.execute("PRAGMA integrity_check").fetchone()[0] == "ok"
             assert con.execute("PRAGMA foreign_key_check").fetchall() == []
+            retained = con.execute("SELECT id,status FROM jobs ORDER BY id").fetchall()
+            assert {row["id"] for row in retained} == set(job_ids), "Shutdown must retain every job"
+            assert any(row["status"] == "queued" for row in retained), "Unprocessed backlog stays queued"
     finally:
         if process.poll() is None:
             process.terminate()
