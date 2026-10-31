@@ -115,11 +115,10 @@ if (-not $PythonExe) {
         $OldPreference = $ErrorActionPreference
         try {
             $ErrorActionPreference = 'Continue'
-            $VersionTag = (& $Interpreter -c 'import sys; print("%d%d" % sys.version_info[:2])' 2>$null | Out-String).Trim()
+            $VersionTag = (& $Interpreter -c 'import sys; print(sys.version_info.major * 100 + sys.version_info.minor)' 2>$null | Out-String).Trim()
         } finally {
             $ErrorActionPreference = $OldPreference
         }
-        Write-Host ("Interpreter " + $Interpreter + " version tag=[" + $VersionTag + "]")
         if (-not $VersionTag -or -not $AttemptedVersions.Add($VersionTag)) { continue }
 
         $Environment = Join-Path $PSScriptRoot '.venv'
