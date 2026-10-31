@@ -18,6 +18,7 @@
     pageSize: 30, offset: 0, query: "", selectedPaper: null, detail: null,
     references: [], reviewPaper: null, jobs: [], jobsSignature: "", settings: null,
     importMode: "linked", rootId: "", browsePath: "", browseParent: null,
+    browseRequest: 0, visiblePdfPaths: [],
     selectedFiles: new Set(), uploads: [], editContext: null, cy: null, graph: null,
     paperRequest: 0, detailRequest: 0, reviewRequest: 0, graphRequest: 0,
     importBusy: false, rebindFile: null, polling: false, initialized: false,
@@ -399,6 +400,8 @@
     if (state.rebindFile) setImportMode("linked");
     $("submit-import").replaceChildren(icon(state.rebindFile ? "folder" : "plus"), document.createTextNode(state.rebindFile ? "核验并重新关联" : "导入并解析"));
     $("import-dialog").showModal();
+    ++state.browseRequest;
+    state.visiblePdfPaths = [];
     state.selectedFiles.clear();
     state.uploads = [];
     $("upload-input").value = "";
@@ -435,14 +438,20 @@
   }
 
   async function browseFiles(path) {
+    const request = ++state.browseRequest;
+    state.visiblePdfPaths = [];
+    updateSelectAllButton();
     if (!state.rootId) return;
     try {
-      const result = await api(`/api/files/browse?${new URLSearchParams({ root_id: state.rootId, path })}`);
+      const rootId = state.rootId;
+      const result = await api(`/api/files/browse?${new URLSearchParams({ root_id: rootId, path })}`);
+      if (request !== state.browseRequest) return;
       state.browsePath = result.path ?? path;
       state.browseParent = result.parent;
       $("browse-path").textContent = `/ ${state.browsePath || "根目录"}`;
       $("browse-up").disabled = state.browseParent === null || state.browseParent === undefined || state.browsePath === "";
       const entries = itemsOf(result);
+      state.visiblePdfPaths = entries.filter((entry) => entry.type === "pdf").map((entry) => entry.path);
       if (!entries.length) {
         emptyState($("file-browser"), { title: "这个目录中没有 PDF", description: "选择其他目录，或上传一份 PDF。", symbol: "folder", small: true });
         updateSelectAllButton();
@@ -474,7 +483,12 @@
       $("file-browser").replaceChildren(fragment);
       updateSelectAllButton();
       clearError("import-error");
-    } catch (error) { showError("import-error", error); }
+    } catch (error) {
+      if (request !== state.browseRequest) return;
+      state.visiblePdfPaths = [];
+      updateSelectAllButton();
+      showError("import-error", error);
+    }
   }
 
   function addUploads(files) {
@@ -506,23 +520,28 @@
 
   function updateSelectAllButton() {
     const control = $("browse-select-all");
-    const boxes = visiblePdfCheckboxes();
-    const allSelected = boxes.length > 0 && boxes.every((box) => state.selectedFiles.has(box.dataset.pdfPath));
+    // The API response, not a DOM selector, is the source of truth for whether
+    // PDFs are available. A real directory must never leave this button inert.
+    const paths = state.visiblePdfPaths;
+    const allSelected = paths.length > 0 && paths.every((path) => state.selectedFiles.has(path));
     control.hidden = Boolean(state.rebindFile);
-    control.disabled = Boolean(state.rebindFile || state.importBusy || !boxes.length);
+    control.disabled = Boolean(state.rebindFile || state.importBusy || state.importMode !== "linked" || !paths.length);
     control.textContent = allSelected ? "取消全选" : "全选";
     control.setAttribute("aria-label", allSelected ? "取消当前目录的 PDF 选择" : "全选当前目录的 PDF");
     control.title = "只影响当前目录已显示的 PDF，其他目录的选择保留";
   }
 
   function toggleSelectAllVisible() {
-    if (state.importBusy || state.rebindFile) return;
-    const boxes = visiblePdfCheckboxes();
-    const shouldSelect = boxes.some((box) => !state.selectedFiles.has(box.dataset.pdfPath));
-    for (const box of boxes) {
-      box.checked = shouldSelect;
-      if (shouldSelect) state.selectedFiles.add(box.dataset.pdfPath);
-      else state.selectedFiles.delete(box.dataset.pdfPath);
+    if (state.importBusy || state.rebindFile || state.importMode !== "linked") return;
+    const paths = state.visiblePdfPaths;
+    if (!paths.length) return;
+    const shouldSelect = paths.some((path) => !state.selectedFiles.has(path));
+    for (const path of paths) {
+      if (shouldSelect) state.selectedFiles.add(path);
+      else state.selectedFiles.delete(path);
+    }
+    for (const checkbox of visiblePdfCheckboxes()) {
+      checkbox.checked = state.selectedFiles.has(checkbox.dataset.pdfPath);
     }
     updateImportCount();
   }
@@ -1153,7 +1172,13 @@
     $("import-dialog").addEventListener("cancel", (event) => { if (state.importBusy) event.preventDefault(); });
     for (const mode of ["linked", "managed"]) $("tab-" + mode).addEventListener("click", () => setImportMode(mode));
     document.querySelector(".modal-tabs").addEventListener("keydown", (event) => { if (["ArrowLeft", "ArrowRight"].includes(event.key)) { event.preventDefault(); const next = state.importMode === "linked" ? "managed" : "linked"; setImportMode(next); $("tab-" + next).focus(); } });
-    $("browse-root").addEventListener("change", () => { state.rootId = $("browse-root").value; state.selectedFiles.clear(); updateImportCount(); browseFiles(""); });
+    $("browse-root").addEventListener("change", () => {
+      state.rootId = $("browse-root").value;
+      state.selectedFiles.clear();
+      state.visiblePdfPaths = [];
+      updateImportCount();
+      browseFiles("");
+    });
     $("browse-up").addEventListener("click", () => browseFiles(state.browseParent || ""));
     $("browse-select-all").addEventListener("click", toggleSelectAllVisible);
     $("upload-input").addEventListener("change", (event) => addUploads(event.target.files));
