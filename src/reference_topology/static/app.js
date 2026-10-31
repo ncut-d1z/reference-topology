@@ -22,6 +22,7 @@
     selectedFiles: new Set(), uploads: [], editContext: null, cy: null, graph: null,
     paperRequest: 0, detailRequest: 0, reviewRequest: 0, graphRequest: 0,
     importBusy: false, rebindFile: null, polling: false, initialized: false,
+    jobsCounts: {}, jobsTotal: 0, jobsWorker: null, shuttingDown: false,
     mergeSource: null, lastMerge: null, revisionContext: null,
   };
 
@@ -1172,19 +1173,91 @@
     } catch (error) { box.append(element("p", "", errorMessage(error))); }
   }
 
+  // Single-flight job polling: a manual refresh and the 3.5-second poll
+  // must share a request rather than issuing two /api/jobs GETs.
+  let jobsFetch = null;
+  let jobsLastFetchedAt = 0;
+
   async function loadJobs(forceRender = false) {
-    const result = await api("/api/jobs");
-    const jobs = itemsOf(result);
-    const signature = JSON.stringify(jobs.map((job) => [job.id, job.status, job.progress, job.updated_at, job.completed_at]));
-    const changed = state.jobsSignature !== signature;
-    const wasInitialized = state.jobsSignature !== "";
-    const oldStates = new Map(state.jobs.map((job) => [job.id, job.status]));
-    const completed = wasInitialized && jobs.some((job) => ["succeeded", "partial", "failed", "interrupted"].includes(job.status) && oldStates.get(job.id) !== job.status);
-    state.jobs = jobs; state.jobsSignature = signature;
-    const active = jobs.filter((job) => ["queued", "running"].includes(job.status)).length;
-    $("nav-job-count").textContent = active; $("nav-job-count").hidden = !active; $("stat-running").textContent = active;
-    if (changed || forceRender) renderJobs();
-    if (completed) { await refreshAfterChange(); renderJobs(); }
+    if (state.shuttingDown) return;
+    if (jobsFetch) {
+      await jobsFetch;
+      if (forceRender && state.view === "tasks") renderJobs();
+      return;
+    }
+    // Also coalesce requests issued immediately after a completed poll
+    // (e.g. bootstrap followed by navigating to the task page).
+    if (Date.now() - jobsLastFetchedAt < 850) {
+      if (forceRender && state.view === "tasks") renderJobs();
+      return;
+    }
+    const request = (async () => {
+      const result = await api("/api/jobs");
+      const jobs = itemsOf(result);
+      const counts = result.counts || {};
+      const previousCounts = state.jobsCounts || {};
+      const signature = JSON.stringify({
+        jobs: jobs.map((job) => [job.id, job.status, job.progress_current, job.progress_total, job.updated_at]),
+        counts, worker: result.worker,
+      });
+      const changed = state.jobsSignature !== signature;
+      const wasInitialized = state.jobsSignature !== "";
+      const oldStates = new Map(state.jobs.map((job) => [job.id, job.status]));
+      const countBefore = (previousCounts.succeeded || 0) + (previousCounts.partial || 0);
+      const countAfter = (counts.succeeded || 0) + (counts.partial || 0);
+      const completed = wasInitialized &&
+        (countAfter > countBefore || jobs.some((job) =>
+          ["succeeded", "partial", "failed", "interrupted"].includes(job.status)
+          && oldStates.has(job.id) && oldStates.get(job.id) !== job.status));
+      state.jobs = jobs;
+      state.jobsCounts = counts;
+      state.jobsTotal = result.total ?? jobs.length;
+      state.jobsWorker = result.worker || null;
+      state.jobsSignature = signature;
+      const queuedAndRunning = (counts.queued || 0) + (counts.running || 0);
+      const active = result.counts ? queuedAndRunning : jobs.filter((job) => ["queued", "running"].includes(job.status)).length;
+      $("nav-job-count").textContent = active;
+      $("nav-job-count").hidden = !active;
+      $("stat-running").textContent = active;
+      renderJobOverview();
+      if (changed && state.view === "tasks") renderJobs();
+      if (completed) await refreshAfterChange();
+      jobsLastFetchedAt = Date.now();
+    })();
+    jobsFetch = request;
+    try {
+      await request;
+      if (forceRender && state.view === "tasks") renderJobs();
+    } finally {
+      if (jobsFetch === request) jobsFetch = null;
+    }
+  }
+
+  function renderJobOverview() {
+    const box = $("task-overview");
+    const counts = state.jobsCounts || {};
+    const summary = [
+      "总计 " + state.jobsTotal,
+      "正在解析 " + (counts.running || 0),
+      "等待处理 " + (counts.queued || 0),
+      "成功 " + (counts.succeeded || 0),
+      "部分完成 " + (counts.partial || 0),
+      "失败 " + (counts.failed || 0),
+      "已中断 " + (counts.interrupted || 0),
+      "已取消 " + (counts.cancelled || 0),
+    ].join(" · ");
+    const worker = state.jobsWorker;
+    let diagnosis = "正在读取工作器状态。";
+    if (worker) {
+      if (!worker.enabled || !worker.alive) {
+        diagnosis = "后台解析工作器没有运行。" + ((counts.queued || 0) ? " 队列有待处理任务，请检查运行终端中的错误。" : "");
+      } else if (worker.stopping) diagnosis = "后台工作器正在停止。";
+      else if (worker.active_job_id) diagnosis = "正在处理任务：" + worker.active_job_id;
+      else diagnosis = (counts.queued || 0) ? "工作器已启动，正在等待领取队列任务。" : "后台工作器已启动，当前没有待处理任务。";
+    }
+    if (worker?.last_error) diagnosis += " 最近一次队列错误：" + worker.last_error;
+    box.replaceChildren(element("strong", "", summary), element("p", "", diagnosis));
+    box.classList.toggle("warning", Boolean(worker && (!worker.alive || worker.last_error)));
   }
 
   function renderJobs() {
@@ -1205,12 +1278,24 @@
       heading.append(element("h3", "", jobTitle), badge(job.status));
       const phase = job.step || job.phase || job.message || "";
       main.append(heading, element("p", "task-meta", [dateText(job.created_at || job.started_at), phase, job.attempts || job.attempt ? `第 ${job.attempts || job.attempt} 次尝试` : ""].filter(Boolean).join(" · ")));
-      if (["queued", "running"].includes(job.status)) {
+      if (job.status === "queued") {
+        main.append(element("p", "task-meta", "尚未领取任务；按入队顺序等待。此状态不代表正在解析。"));
+      } else if (job.status === "running") {
         const progress = element("div", "progress-track");
         const fill = element("div", "progress-fill");
-        let value = Number(job.progress);
-        if (job.progress === null || job.progress === undefined || !Number.isFinite(value)) fill.classList.add("indeterminate");
-        else { if (value <= 1) value *= 100; fill.style.width = `${Math.min(100, Math.max(0, value))}%`; progress.setAttribute("role", "progressbar"); progress.setAttribute("aria-valuenow", String(Math.round(value))); progress.setAttribute("aria-label", "解析进度"); }
+        const current = Number(job.progress_current || 0);
+        const total = Number(job.progress_total || 0);
+        if (total > 0 && Number.isFinite(current) && Number.isFinite(total)) {
+          const percent = Math.min(100, Math.max(0, current * 100 / total));
+          fill.style.width = `${percent}%`;
+          progress.setAttribute("role", "progressbar");
+          progress.setAttribute("aria-valuenow", String(Math.round(percent)));
+          progress.setAttribute("aria-label", "解析阶段进度");
+          main.append(element("p", "task-meta", `正在解析 · 阶段 ${current}/${total}（不是页面处理百分比）`));
+        } else {
+          fill.classList.add("indeterminate");
+          main.append(element("p", "task-meta", "解析进程已启动，正在等待阶段信息。"));
+        }
         progress.append(fill); main.append(progress);
       }
       const error = asObject(job.error || job.error_json);
@@ -1304,10 +1389,30 @@
     }, "正在备份…");
   }
 
+  async function shutdownWorkspace(event) {
+    if (state.shuttingDown) return;
+    if (!window.confirm("确定关闭个人研究空间？本机 Python 服务将正常退出；正在解析的任务会安全中断，未处理的队列、数据库及 PDF 文件都将保留。")) return;
+    const control = event.currentTarget;
+    control.disabled = true;
+    try {
+      const response = await api("/api/shutdown", { method: "POST", json: {} });
+      if (response.status !== "stopping") throw new Error("关闭请求未被接受，请查看后台终端日志。");
+      state.shuttingDown = true;
+      $("connection-label").textContent = "正在安全关闭本机服务";
+      $("open-import").disabled = true;
+      control.textContent = "正在关闭…";
+      toast("正在关闭个人研究空间。保留全部文件、数据库和待处理任务。");
+    } catch (error) {
+      control.disabled = false;
+      toast(errorMessage(error), true);
+    }
+  }
+
   function bindEvents() {
     document.querySelectorAll("[data-view]").forEach((link) => link.addEventListener("click", (event) => { event.preventDefault(); changeView(link.dataset.view); }));
     window.addEventListener("hashchange", () => changeView(location.hash.slice(1), { fromHash: true }));
     $("open-import").addEventListener("click", openImport);
+    $("shutdown-workspace").addEventListener("click", shutdownWorkspace);
     document.querySelectorAll("[data-close-dialog]").forEach((node) => node.addEventListener("click", () => { if (node.dataset.closeDialog === "import-dialog" && state.importBusy) return; $(node.dataset.closeDialog).close(); }));
     $("import-dialog").addEventListener("cancel", (event) => { if (state.importBusy) event.preventDefault(); });
     for (const mode of ["linked", "managed"]) $("tab-" + mode).addEventListener("click", () => setImportMode(mode));
@@ -1376,7 +1481,7 @@
   setImportMode("linked");
   bootstrap();
   window.setInterval(async () => {
-    if (!state.initialized || state.polling || document.hidden) return;
+    if (!state.initialized || state.polling || state.shuttingDown || document.hidden) return;
     state.polling = true;
     try { await loadJobs(); $("connection-label").textContent = "已连接 · 数据保存在本机"; }
     catch (_) { $("connection-label").textContent = "连接暂时中断，正在重试"; }
