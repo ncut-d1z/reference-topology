@@ -29,6 +29,7 @@ class Element {
   append(...nodes) { this.children.push(...nodes); }
   replaceChildren(...nodes) { this.children = [...nodes]; }
   click() { this.clicked = true; }
+  close() { this.closed = true; }
   remove() {}
 }
 const report = new Element("section");
