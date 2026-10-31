@@ -26,6 +26,9 @@ jobs:
             $errors | ForEach-Object { Write-Host $_.ToString() }
             throw 'run.ps1 syntax errors'
           }
+          if (-not (Select-String -Path .\run.ps1 -Pattern 'https://pypi.tuna.tsinghua.edu.cn/simple' -SimpleMatch)) {
+            throw 'TUNA mirror is missing'
+          }
       - name: First launch and repeat startup on Windows PowerShell 5.1
         shell: powershell
         run: |
@@ -33,6 +36,17 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw 'first check failed' }
           .\run.ps1 --check
           if ($LASTEXITCODE -ne 0) { throw 'repeat check failed' }
+      - name: Preserve an existing incompatible virtual environment
+        shell: powershell
+        run: |
+          Rename-Item -LiteralPath .venv -NewName .venv-py312
+          New-Item -ItemType Directory -Path .venv | Out-Null
+          Set-Content -LiteralPath .venv\sentinel.txt -Value 'original environment'
+          .\run.ps1 --check
+          if ($LASTEXITCODE -ne 0) { throw 'isolated environment check failed' }
+          if ((Get-Content -LiteralPath .venv\sentinel.txt -Raw).Trim() -ne 'original environment') {
+            throw 'existing environment has been modified'
+          }
       - name: Check PowerShell 7
         shell: pwsh
         run: |
