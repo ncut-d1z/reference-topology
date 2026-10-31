@@ -614,7 +614,12 @@ class Store:
                 self._metadata(con, source, metadata, run_id=run_id)
             if auto_merge_target and status not in {"failed", "cancelled"}:
                 root = self._merge(con, root, auto_merge_target, "PDF metadata matched an existing strong identifier", "system")["paper_id"]
-            matching = self._match_pending(con) if active else {"accepted": 0, "candidates": 0, "created_papers": 0}
+            # Match the new snapshot and only older references plausibly
+            # affected by its bibliographic identity. Re-scanning every
+            # reference against every paper inside this write transaction
+            # creates quadratic growth and holds SQLite's writer lock.
+            matching = self._match_pending(con, run_id=run_id,
+                         changed_paper_id=root if metadata else None) if active else {"accepted": 0, "candidates": 0, "created_papers": 0}
             published = {"run_id": run_id, "paper_id": root, "file_id": file_id, "reference_count": len(prepared),
                          "active": active, "status": status, "warnings": warnings, "matching": matching}
             if job_id:
@@ -641,12 +646,45 @@ class Store:
                                   {"engine": "manual-revision", "engine_version": "1", "status": "succeeded",
                                    "metadata": {}, "references": references, "warnings": []}, base_run_id=base_run_id)
 
-    def _match_pending(self, con: sqlite3.Connection) -> dict:
-        from .matching import match_reference
+    def _match_pending(self, con: sqlite3.Connection, *, run_id: str | None = None,
+                       changed_paper_id: str | None = None) -> dict:
+        from .matching import match_reference, normalize_title, normalize_doi, normalize_arxiv
         papers = self._all_papers(con)
         stats = {"accepted": 0, "candidates": 0, "created_papers": 0, "unresolved": 0}
-        entries = con.execute("""SELECT e.* FROM reference_entries e JOIN extraction_runs r ON r.id=e.run_id
-            WHERE r.is_active=1 ORDER BY e.created_at,e.ordinal""").fetchall()
+        if run_id is None:
+            entries = con.execute("""SELECT e.* FROM reference_entries e JOIN extraction_runs r ON r.id=e.run_id
+                WHERE r.is_active=1 ORDER BY e.created_at,e.ordinal""").fetchall()
+        else:
+            entries = con.execute("""SELECT e.* FROM reference_entries e JOIN extraction_runs r ON r.id=e.run_id
+                WHERE r.is_active=1 AND r.id=? ORDER BY e.ordinal""", (run_id,)).fetchall()
+            if changed_paper_id:
+                # New metadata can resolve earlier reference-only entries.
+                # Check only strong identifiers or exactly normalized titles
+                # instead of rematching every old candidate against all papers.
+                target = next((paper for paper in papers if paper["id"] == changed_paper_id), None)
+                if target:
+                    family = self._family(con, changed_paper_id)
+                    marks = ",".join("?" for _ in family)
+                    identifiers = con.execute(f"""SELECT scheme,value_normalized FROM paper_identifiers
+                        WHERE paper_id IN ({marks})""", family).fetchall()
+                    doi_values = {row["value_normalized"] for row in identifiers if row["scheme"] == "doi"}
+                    arxiv_values = {row["value_normalized"] for row in identifiers if row["scheme"] == "arxiv"}
+                    normalized_title = normalize_title(target.get("title"))
+                    if doi_values or arxiv_values or len(normalized_title) >= 12:
+                        older = con.execute("""SELECT e.* FROM reference_entries e
+                            JOIN extraction_runs r ON r.id=e.run_id
+                            WHERE r.is_active=1 AND r.id<>? AND NOT EXISTS
+                            (SELECT 1 FROM citation_assertions a
+                             WHERE a.reference_entry_id=e.id AND a.is_current=1 AND a.status='accepted')
+                            ORDER BY e.created_at,e.ordinal""", (run_id,)).fetchall()
+                        for entry in older:
+                            parsed = json.loads(entry["parsed_json"])
+                            doi = normalize_doi(parsed.get("doi"))
+                            arxiv = normalize_arxiv(parsed.get("arxiv"))
+                            title = normalize_title(parsed.get("title"))
+                            if ((doi and doi in doi_values) or (arxiv and arxiv in arxiv_values)
+                                    or (len(normalized_title) >= 12 and title == normalized_title)):
+                                entries.append(entry)
         for entry in entries:
             current = con.execute("SELECT * FROM citation_assertions WHERE reference_entry_id=? AND is_current=1", (entry["id"],)).fetchall()
             if any(r["status"] == "accepted" for r in current):
