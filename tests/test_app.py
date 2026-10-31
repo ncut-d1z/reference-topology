@@ -272,3 +272,21 @@ def test_import_dialog_has_select_all_control(environment):
     assert 'id="browse-select-all"' in html
     assert 'aria-label="全选当前目录的 PDF"' in html
     assert 'id="browse-up"' in html
+
+def test_index_uses_content_versioned_assets_and_never_caches_html(environment):
+    import hashlib
+    import reference_topology
+
+    app, client, papers, settings = environment
+    response = client.get("/")
+    assert response.status_code == 200
+    assert response.headers["cache-control"] == "no-store"
+    static = Path(reference_topology.__file__).parent / "static"
+    js_hash = hashlib.sha256((static / "app.js").read_bytes()).hexdigest()[:16]
+    css_hash = hashlib.sha256((static / "styles.css").read_bytes()).hexdigest()[:16]
+    assert f'src="/static/app.js?v={js_hash}"' in response.text
+    assert f'href="/static/styles.css?v={css_hash}"' in response.text
+    script = client.get(f"/static/app.js?v={js_hash}")
+    assert script.status_code == 200
+    assert "visiblePdfPaths" in script.text
+    assert "toggleSelectAllVisible" in script.text
