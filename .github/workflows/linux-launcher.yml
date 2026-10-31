@@ -9,23 +9,31 @@ on:
 jobs:
   linux-launcher:
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ['3.12', '3.13']
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
-          python-version: '3.12'
-      - name: Check bash syntax and default TUNA index
+          python-version: ${{ matrix.python-version }}
+      - name: Check bash syntax and mirror
         run: |
           bash -n run.sh
           grep -Fq 'https://pypi.tuna.tsinghua.edu.cn/simple' run.sh
-      - name: First launch and repeat startup
+      - name: Launch twice with chosen interpreter
+        env:
+          EXPECTED_VERSION: ${{ matrix.python-version }}
         run: |
-          bash run.sh --check
-          bash run.sh --check
-      - name: Keep an incompatible environment intact
+          bash ./run.sh --check
+          bash ./run.sh --check
+          test "$(.venv/bin/python -c 'import sys; print("%d.%d" % sys.version_info[:2])')" = "$EXPECTED_VERSION"
+      - name: Preserve unrelated virtual environment
         run: |
-          mv .venv .venv-py312
+          version_tag=$(.venv/bin/python -c 'import sys; print("%d%d" % sys.version_info[:2])')
+          mv .venv ".venv-py$version_tag"
           mkdir .venv
-          printf '%s\n' 'original environment' > .venv/sentinel.txt
-          bash run.sh --check
-          test "$(cat .venv/sentinel.txt)" = 'original environment'
+          printf '%s\n' 'must retain' > .venv/sentinel.txt
+          bash ./run.sh --check
+          test "$(cat .venv/sentinel.txt)" = 'must retain'
