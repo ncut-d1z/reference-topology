@@ -81,7 +81,8 @@ if (-not $PythonExe) {
     # Prefer python already selected on PATH (including an activated toolchain).
     foreach ($CommandName in @('python', 'python3')) {
         foreach ($CommandInfo in @(Get-Command $CommandName -All -ErrorAction SilentlyContinue)) {
-            $Candidate = $CommandInfo.Source
+            $Candidate = $CommandInfo.Path
+            if (-not $Candidate) { $Candidate = $CommandInfo.Definition }
             if ($Candidate -and -not $Candidates.Contains($Candidate)) {
                 [void]$Candidates.Add($Candidate)
             }
@@ -104,9 +105,13 @@ if (-not $PythonExe) {
             }
         }
     }
+    Write-Host ("Discovered Python executables: " + ($Candidates -join ', '))
     $AttemptedVersions = New-Object 'System.Collections.Generic.HashSet[string]'
     foreach ($Interpreter in $Candidates) {
-        if (-not (Test-PythonExecutable $Interpreter)) { continue }
+        if (-not (Test-PythonExecutable $Interpreter)) {
+            Write-Host "Skipping incompatible Python candidate: $Interpreter"
+            continue
+        }
         $OldPreference = $ErrorActionPreference
         try {
             $ErrorActionPreference = 'Continue'
