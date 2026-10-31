@@ -13,7 +13,7 @@ import uuid
 
 from fastapi import FastAPI, File, Query, Request, UploadFile
 from fastapi.exceptions import RequestValidationError
-from fastapi.responses import FileResponse, JSONResponse, Response
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, ConfigDict, Field
 from starlette.background import BackgroundTask
@@ -128,10 +128,18 @@ def create_app(settings: Settings | None = None, *, run_worker: bool = True) -> 
                             "fields": [".".join(str(v) for v in e["loc"]) for e in error.errors()]}}, status_code=422)
 
     static = Path(__file__).parent / "static"
+    # HTML and JavaScript must be deployed as a matched pair. A new HTML page
+    # paired with a cached, older app.js leaves newly added controls inert.
+    # Content-derived URLs avoid relying on users to clear their browser cache.
+    js_revision = hashlib.sha256((static / "app.js").read_bytes()).hexdigest()[:16]
+    css_revision = hashlib.sha256((static / "styles.css").read_bytes()).hexdigest()[:16]
+    homepage = (static / "index.html").read_text(encoding="utf-8")
+    homepage = homepage.replace('src="/static/app.js"', f'src="/static/app.js?v={js_revision}"')
+    homepage = homepage.replace('href="/static/styles.css"', f'href="/static/styles.css?v={css_revision}"')
 
     @app.get("/")
     def home():
-        return FileResponse(static / "index.html", media_type="text/html")
+        return HTMLResponse(homepage, headers={"Cache-Control": "no-store"})
 
     @app.get("/api/session")
     def session():
