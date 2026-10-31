@@ -394,6 +394,7 @@
     state.rebindFile = options.rebind || null;
     $("import-title").textContent = state.rebindFile ? "重新定位论文 PDF" : "导入论文 PDF";
     $("tab-managed").hidden = Boolean(state.rebindFile);
+    $("browse-select-all").hidden = Boolean(state.rebindFile);
     $("import-linked").querySelector(".import-description").textContent = state.rebindFile ? "选择原 PDF 的新位置。后端核验内容哈希后恢复关联，文献身份和已有证据保持不变。" : "从允许目录中选择 PDF。原文件保留在原位置，工作台记录其 URI。";
     if (state.rebindFile) setImportMode("linked");
     $("submit-import").replaceChildren(icon(state.rebindFile ? "folder" : "plus"), document.createTextNode(state.rebindFile ? "核验并重新关联" : "导入并解析"));
@@ -442,7 +443,11 @@
       $("browse-path").textContent = `/ ${state.browsePath || "根目录"}`;
       $("browse-up").disabled = state.browseParent === null || state.browseParent === undefined || state.browsePath === "";
       const entries = itemsOf(result);
-      if (!entries.length) { emptyState($("file-browser"), { title: "这个目录中没有 PDF", description: "选择其他目录，或上传一份 PDF。", symbol: "folder", small: true }); return; }
+      if (!entries.length) {
+        emptyState($("file-browser"), { title: "这个目录中没有 PDF", description: "选择其他目录，或上传一份 PDF。", symbol: "folder", small: true });
+        updateSelectAllButton();
+        return;
+      }
       const fragment = document.createDocumentFragment();
       for (const entry of entries) {
         if (entry.type === "directory") {
@@ -451,7 +456,10 @@
           fragment.append(row);
         } else if (entry.type === "pdf") {
           const row = element("label", "file-row");
-          const checkbox = document.createElement("input"); checkbox.type = "checkbox"; checkbox.checked = state.selectedFiles.has(entry.path);
+          const checkbox = document.createElement("input");
+          checkbox.type = "checkbox";
+          checkbox.dataset.pdfPath = entry.path;
+          checkbox.checked = state.selectedFiles.has(entry.path);
           checkbox.addEventListener("change", () => {
             if (checkbox.checked) {
               if (state.rebindFile) { state.selectedFiles.clear(); $("file-browser").querySelectorAll("input[type=checkbox]").forEach((other) => { if (other !== checkbox) other.checked = false; }); }
@@ -464,6 +472,7 @@
         }
       }
       $("file-browser").replaceChildren(fragment);
+      updateSelectAllButton();
       clearError("import-error");
     } catch (error) { showError("import-error", error); }
   }
@@ -489,10 +498,40 @@
     $("upload-list").replaceChildren(...children);
   }
 
+  // Select only PDFs shown in the current directory. Keep selections made
+  // in other directories, and do not select subdirectories or truncated pages.
+  function visiblePdfCheckboxes() {
+    return Array.from($("file-browser").querySelectorAll('input[type="checkbox"][data-pdf-path]'));
+  }
+
+  function updateSelectAllButton() {
+    const control = $("browse-select-all");
+    const boxes = visiblePdfCheckboxes();
+    const allSelected = boxes.length > 0 && boxes.every((box) => state.selectedFiles.has(box.dataset.pdfPath));
+    control.hidden = Boolean(state.rebindFile);
+    control.disabled = Boolean(state.rebindFile || state.importBusy || !boxes.length);
+    control.textContent = allSelected ? "取消全选" : "全选";
+    control.setAttribute("aria-label", allSelected ? "取消当前目录的 PDF 选择" : "全选当前目录的 PDF");
+    control.title = "只影响当前目录已显示的 PDF，其他目录的选择保留";
+  }
+
+  function toggleSelectAllVisible() {
+    if (state.importBusy || state.rebindFile) return;
+    const boxes = visiblePdfCheckboxes();
+    const shouldSelect = boxes.some((box) => !state.selectedFiles.has(box.dataset.pdfPath));
+    for (const box of boxes) {
+      box.checked = shouldSelect;
+      if (shouldSelect) state.selectedFiles.add(box.dataset.pdfPath);
+      else state.selectedFiles.delete(box.dataset.pdfPath);
+    }
+    updateImportCount();
+  }
+
   function updateImportCount() {
     const count = state.importMode === "linked" ? state.selectedFiles.size : state.uploads.length;
     $("import-selection").textContent = count ? `已选择 ${count} 份 PDF` : "尚未选择文件";
     $("submit-import").disabled = !count || state.importBusy;
+    updateSelectAllButton();
   }
 
   async function submitImport() {
@@ -519,14 +558,20 @@
       }
       const imported = itemsOf(result);
       const errors = result.errors || [];
+      const added = result.summary?.added ?? imported.filter((item) => item.created !== false).length;
+      const duplicates = result.summary?.duplicates ?? imported.filter((item) => item.duplicate || item.created === false).length;
+      const status = `新增 ${added} 份，跳过重复 ${duplicates} 份，失败 ${errors.length} 份。`;
       if (errors.length) {
-        showError("import-error", new Error(`${imported.length ? `已登记 ${imported.length} 份文件。` : ""}${errors.map((error) => typeof error === "string" ? error : `${error.path || error.filename || "文件"}：${error.message || error.error?.message || "登记失败"}`).join("\n")}`));
-      } else $("import-dialog").close();
+        showError("import-error", new Error(`${status}\n${errors.map((error) => typeof error === "string" ? error : `${error.path || error.filename || error.name || "文件"}：${error.message || error.error?.message || "登记失败"}`).join("\n")}`));
+      } else {
+        $("import-dialog").close();
+        toast(`导入完成：${status}${added ? " 已为新增 PDF 安排解析任务。" : ""}`);
+      }
       if (imported.length) {
-        toast(`已登记 ${imported.length} 份 PDF，解析任务将在后台继续。`);
         state.query = ""; state.offset = 0; $("paper-search").value = "";
         await loadPapers(); await updatePaperSelectors(); await loadJobs();
-        if (imported[0].paper_id) await selectPaper(imported[0].paper_id, { navigate: !errors.length });
+        const firstNew = imported.find((item) => item.created !== false);
+        if (firstNew?.paper_id) await selectPaper(firstNew.paper_id, { navigate: !errors.length });
       }
     } catch (error) { showError("import-error", error); }
     finally { state.importBusy = false; submit.replaceChildren(icon(state.rebindFile ? "folder" : "plus"), document.createTextNode(state.rebindFile ? "核验并重新关联" : "导入并解析")); updateImportCount(); }
@@ -1082,6 +1127,7 @@
     document.querySelector(".modal-tabs").addEventListener("keydown", (event) => { if (["ArrowLeft", "ArrowRight"].includes(event.key)) { event.preventDefault(); const next = state.importMode === "linked" ? "managed" : "linked"; setImportMode(next); $("tab-" + next).focus(); } });
     $("browse-root").addEventListener("change", () => { state.rootId = $("browse-root").value; state.selectedFiles.clear(); updateImportCount(); browseFiles(""); });
     $("browse-up").addEventListener("click", () => browseFiles(state.browseParent || ""));
+    $("browse-select-all").addEventListener("click", toggleSelectAllVisible);
     $("upload-input").addEventListener("change", (event) => addUploads(event.target.files));
     const zone = $("upload-zone");
     for (const type of ["dragenter", "dragover"]) zone.addEventListener(type, (event) => { event.preventDefault(); zone.classList.add("drag-over"); });
