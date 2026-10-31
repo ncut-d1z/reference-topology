@@ -553,6 +553,130 @@
     updateSelectAllButton();
   }
 
+  // Exact-content duplicate reports are not bibliographic-title matches.
+  function importDuplicates(result) {
+    return [...itemsOf(result).filter((item) => item.duplicate || item.created === false),
+      ...(result.skipped || [])];
+  }
+
+  function importFailureText(error) {
+    return typeof error === "string" ? error :
+      (error?.message || error?.error?.message || "文件登记未完成，未提供进一步错误原因");
+  }
+
+  function importFileLabel(item) {
+    return item?.path || item?.name || item?.filename || "文件名未知";
+  }
+
+  function clearImportReport() {
+    const container = $("import-report");
+    container.replaceChildren();
+    container.hidden = true;
+  }
+
+  function downloadImportReport(result) {
+    const header = ["类型", "本次文件", "原因", "已有文献标题", "发表年份", "DOI", "已有文件名", "已有文件 URI", "已有文献 ID", "SHA-256", "错误码"];
+    const rows = importDuplicates(result).map((item) => {
+      const old = item.duplicate_of || {};
+      const reason = item.duplicate_reason === "repeated_path" ?
+        "本次请求中重复选择相同路径" : "SHA-256 文件内容与已有 PDF 一致";
+      return ["重复", importFileLabel(item), reason, old.title || "", old.year || "",
+        old.doi || "", old.file_name || "", old.file_uri || "", old.paper_id || "",
+        old.sha256 || "", ""];
+    });
+    for (const error of result.errors || []) {
+      rows.push(["失败或待核实", importFileLabel(error), importFailureText(error),
+        "", "", "", "", "", "", "", error?.code || ""]);
+    }
+    const csvCell = (raw) => {
+      let value = String(raw ?? "");
+      // Prevent spreadsheet formula injection from filenames or PDF metadata.
+      if (/^\s*[=+\-@\t\r]/.test(value)) value = "'" + value;
+      return '"' + value.replace(/"/g, '""') + '"';
+    };
+    const csv = "\uFEFF" + [header, ...rows].map((row) => row.map(csvCell).join(",")).join("\r\n");
+    const url = URL.createObjectURL(new Blob([csv], { type: "text/csv;charset=utf-8" }));
+    const anchor = document.createElement("a");
+    anchor.href = url;
+    anchor.download = "reference-topology-import-" + new Date().toISOString().replace(/[:.]/g, "-") + ".csv";
+    document.body.append(anchor);
+    anchor.click();
+    anchor.remove();
+    window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+  }
+
+  function renderImportReport(result) {
+    const container = $("import-report");
+    const duplicates = importDuplicates(result);
+    const errors = result.errors || [];
+    const added = result.summary?.added ?? itemsOf(result).filter((item) => item.created !== false).length;
+    const duplicatesCount = result.summary?.duplicates ?? duplicates.length;
+    const headline = element("div", "import-report-heading");
+    const heading = element("h3", "", "导入结果明细");
+    const download = button("下载明细 CSV", () => downloadImportReport(result), "button compact");
+    headline.append(heading, download);
+    const overview = element("p", "import-report-overview",
+      "新增 " + added + " 份 · 跳过重复 " + duplicatesCount + " 份 · 失败/待核实 " + errors.length + " 份");
+    const explanation = element("p", "import-report-note",
+      "重复按 PDF 文件内容 SHA-256 判定，不等于仅凭论文标题去重。文件登记失败与后续的参考文献解析失败是两回事；后者请在“解析任务”查看。");
+    const children = [headline, overview, explanation];
+
+    if (duplicates.length) {
+      const details = document.createElement("details");
+      details.className = "import-report-group";
+      details.open = true;
+      details.append(element("summary", "", "重复文件（" + duplicates.length + "）"));
+      const list = element("ol", "import-report-list");
+      for (const item of duplicates) {
+        const old = item.duplicate_of || {};
+        const entry = element("li", "import-report-item");
+        entry.append(element("strong", "import-report-file", importFileLabel(item)));
+        if (item.duplicate_reason === "repeated_path") {
+          entry.append(element("p", "", "原因：本次导入请求重复选择了相同的文件路径，已跳过重复处理。"));
+        } else {
+          entry.append(element("p", "", "原因：SHA-256 文件内容与已登记 PDF 完全一致，未新增论文或解析任务。不同保存位置仍会被记录。"));
+        }
+        if (old.title) entry.append(element("p", "", "对应已有文献：" + old.title + (old.year ? "（" + old.year + "）" : "")));
+        else entry.append(element("p", "", "对应已有文献：题名尚未识别，以已有文件信息为准。"));
+        if (old.doi) entry.append(element("p", "", "DOI：" + old.doi));
+        if (old.file_name) entry.append(element("p", "", "原有 PDF：" + old.file_name));
+        if (old.file_uri) entry.append(element("p", "import-report-uri", "原有文件位置：" + old.file_uri));
+        if (old.sha256) entry.append(element("p", "import-report-uri", "内容 SHA-256：" + old.sha256));
+        if (old.paper_id) {
+          entry.append(button("查看已有文献", () => {
+            $("import-dialog").close();
+            selectPaper(old.paper_id, { navigate: true });
+          }, "button compact"));
+        }
+        if (!item.duplicate_of) {
+          entry.append(element("p", "import-report-note", "首次处理记录未成功，请同时检查失败列表。"));
+        }
+        list.append(entry);
+      }
+      details.append(list);
+      children.push(details);
+    }
+
+    if (errors.length) {
+      const details = document.createElement("details");
+      details.className = "import-report-group import-report-failures";
+      details.open = true;
+      details.append(element("summary", "", "失败或待核实文件（" + errors.length + "）"));
+      const list = element("ol", "import-report-list");
+      for (const error of errors) {
+        const entry = element("li", "import-report-item");
+        entry.append(element("strong", "import-report-file", importFileLabel(error)));
+        entry.append(element("p", "", "原因：" + importFailureText(error)));
+        if (error && error.code) entry.append(element("small", "import-report-code", "错误代码：" + error.code));
+        list.append(entry);
+      }
+      details.append(list);
+      children.push(details);
+    }
+    container.replaceChildren(...children);
+    container.hidden = false;
+  }
+
   // The API limits linked imports to 100 paths and uploads to 20 files.
   // Submit large selections in bounded batches instead of rejecting "select all".
   async function importSelectedBatches() {
