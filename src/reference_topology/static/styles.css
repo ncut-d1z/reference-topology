@@ -1676,7 +1676,13 @@ input[type="checkbox"] {
 }
 
 .browse-toolbar select {
-  flex:1
+  flex:1;
+  min-width:0
+}
+
+.browse-select-all {
+  white-space:nowrap;
+  flex-shrink:0
 }
 
 .browse-path {
