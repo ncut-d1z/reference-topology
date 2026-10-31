@@ -50,12 +50,12 @@ cd reference-topology
 ### Ubuntu / Linux
 
 ```bash
-python3.12 -m venv .venv
+python3 -m venv .venv
 .venv/bin/python -m pip install -e .
 .venv/bin/python -m reference_topology
 ```
 
-启动脚本固定寻找 Python 3.12（避免现有 Python 3.14 环境缺少兼容的二进制依赖），可以运行：
+更推荐直接运行自适应启动脚本，无需指定 Python 小版本：
 
 ```bash
 ./run.sh
@@ -64,12 +64,12 @@ python3.12 -m venv .venv
 ### Windows PowerShell
 
 ```powershell
-py -3.12 -m venv .venv
+py -3 -m venv .venv
 .\.venv\Scripts\python.exe -m pip install -e .
 .\.venv\Scripts\python.exe -m reference_topology
 ```
 
-也提供 `run.ps1`。两个启动脚本都会自动检测 Python 3.12；若原有 `.venv` 不是 Python 3.12，会保留其全部文件并在 `.venv-py312` 中创建独立环境，不会删改原环境。Windows 优先使用 `py -3.12`，必要时使用 PATH 中的 Python 3.12；请先确认已经安装 Python 3.12。上述显式命令不要求激活虚拟环境。
+推荐直接使用 `run.ps1`。两个启动脚本均**不锁定 Python 小版本**，而是使用项目声明的最低版本 `>=3.12`：优先复用已有 `.venv` 和 `.venv-py*`；如果依赖未安装则先尝试修复该环境；仍不可用时枚举系统已安装的兼容 Python，在新的 `.venv` 或 `.venv-py<版本>` 中安装依赖。原有虚拟环境不会被删除或覆盖。Windows 通过 `PATH` 和 `py -0p` 搜索，Linux 通过 `PATH` 搜索。只有安装的解释器均不满足版本要求，或全部无法安装依赖时，才明确报错。上述显式命令不要求激活虚拟环境，执行前需确认 `python3` 或 `py -3` 指向的版本符合最低要求。
 
 ### pip 安装镜像
 
@@ -89,7 +89,7 @@ Linux：
 PIP_INDEX_URL=https://pypi.org/simple ./run.sh --check
 ```
 
-清华镜像的[官方说明](https://mirrors.tuna.tsinghua.edu.cn/help/pypi/)提及对欧盟用户的访问限制。如果镜像返回地区性拒绝访问，使用上述一次性环境变量覆盖方式即可，无需删除虚拟环境。**切换 pip 镜像不能解决 Python 版本不兼容，因此启动脚本强制选择 Python 3.12。**
+清华镜像的[官方说明](https://mirrors.tuna.tsinghua.edu.cn/help/pypi/)提及对欧盟用户的访问限制。如果镜像返回地区性拒绝访问，使用上述一次性环境变量覆盖方式即可，无需删除虚拟环境。**镜像源和 Python 兼容性是不同问题。** 例如 Python 3.14 因缺少匹配的 `pydantic-core` wheel 而安装失败时，启动脚本会保留该环境，并在本机其他已安装的兼容解释器中尝试安装；若无可用替代则报错，不会强行安装 Python 3.12。
 
 启动后打开 **<http://127.0.0.1:8765>**。停止服务使用终端的 `Ctrl+C`。默认仅监听本机回环地址，当前版本按单用户、单应用进程设计。
 
