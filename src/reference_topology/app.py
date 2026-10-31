@@ -176,17 +176,38 @@ def create_app(settings: Settings | None = None, *, run_worker: bool = True) -> 
         for index, relative in enumerate(paths):
             try:
                 item = files.register(body.root_id, relative)
-                # SHA-256 is the authoritative PDF identity. Previously imported
-                # contents gain another location, not another paper or parse task.
+                # The content hash identifies a PDF asset; duplicate paths may
+                # still be registered as alternate locations, without new jobs.
                 request_key = f"{body.request_key}:{index}" if body.request_key else None
                 job = runner.enqueue(item["file_id"], item["paper_id"], request_key=request_key) if item["created"] else None
                 items.append({**item, "duplicate": not item["created"],
-                              "job_id": job["id"] if job else None, "name": Path(relative).name})
+                              "duplicate_reason": "identical_content" if not item["created"] else None,
+                              "job_id": job["id"] if job else None,
+                              "path": relative, "name": Path(relative).name})
             except (StoreError, FileError, OSError) as error:
-                errors.append({"path": relative, "code": getattr(error, "code", "file_unavailable"), "message": str(error)})
-        return {"items": items, "errors": errors,
+                errors.append({"path": relative, "name": Path(relative).name,
+                               "code": getattr(error, "code", "file_unavailable"), "message": str(error)})
+        # Report even repeated path entries that were skipped before hashing.
+        by_path = {item["path"]: item for item in items}
+        skipped, seen = [], set()
+        for relative in body.paths:
+            if relative in seen:
+                previous = by_path.get(relative)
+                skipped.append({
+                    "path": relative, "name": Path(relative).name,
+                    "duplicate_reason": "repeated_path",
+                    "duplicate_of": ({
+                        "file_id": previous["file_id"], "paper_id": previous["paper_id"],
+                        "file_name": previous["name"], "file_uri": None,
+                        "title": previous.get("duplicate_of", {}).get("title") if previous.get("duplicate_of") else None,
+                        "year": previous.get("duplicate_of", {}).get("year") if previous.get("duplicate_of") else None,
+                        "doi": previous.get("duplicate_of", {}).get("doi") if previous.get("duplicate_of") else None,
+                    } if previous else None),
+                })
+            seen.add(relative)
+        return {"items": items, "errors": errors, "skipped": skipped,
                 "summary": {"added": sum(bool(item["created"]) for item in items),
-                            "duplicates": sum(bool(item["duplicate"]) for item in items) + len(body.paths) - len(paths),
+                            "duplicates": sum(bool(item["duplicate"]) for item in items) + len(skipped),
                             "failed": len(errors)}}
 
     @app.post("/api/files/upload", status_code=202)
@@ -211,6 +232,7 @@ def create_app(settings: Settings | None = None, *, run_worker: bool = True) -> 
                 item = await run_in_threadpool(files.register_upload, temporary, uploaded.filename)
                 job = await run_in_threadpool(runner.enqueue, item["file_id"], item["paper_id"]) if item["created"] else None
                 items.append({**item, "duplicate": not item["created"],
+                              "duplicate_reason": "identical_content" if not item["created"] else None,
                               "job_id": job["id"] if job else None, "name": uploaded.filename})
             except (StoreError, FileError, OSError) as error:
                 errors.append({"name": uploaded.filename, "code": getattr(error, "code", "file_unavailable"), "message": str(error)})
