@@ -289,6 +289,14 @@ class Store:
             else:
                 aid = _id()
                 con.execute("INSERT INTO pdf_assets(id,sha256,byte_size,created_at) VALUES(?,?,?,?)", (aid, sha256.lower(), byte_size, _now()))
+            # Capture the existing location BEFORE adding this import's location,
+            # otherwise a duplicate from another folder could match itself.
+            prior_location = con.execute("""SELECT display_name,canonical_uri,original_uri
+                FROM file_locations WHERE asset_id=?
+                ORDER BY CASE WHEN host_id=? THEN 0 ELSE 1 END,
+                         CASE WHEN canonical_uri=? THEN 0 ELSE 1 END,
+                         is_current DESC,created_at,id LIMIT 1""",
+                (aid, host_id, canonical_uri)).fetchone() if not created else None
             self._location(con, aid, canonical_uri, original_uri, display_name, host_id, root_key, location_kind, byte_size)
             linked = con.execute("SELECT paper_id FROM paper_files WHERE asset_id=? ORDER BY is_preferred DESC,created_at", (aid,)).fetchone()
             if linked:
@@ -296,7 +304,26 @@ class Store:
             else:
                 pid = self._new_paper(con)
                 con.execute("INSERT INTO paper_files VALUES(?,?,?,1,?)", (pid, aid, "primary", _now()))
-            return {"file_id": aid, "asset_id": aid, "paper_id": pid, "created": created}
+            duplicate_of = None
+            if not created:
+                paper = self._metadata_view(con, pid)
+                family = self._family(con, pid)
+                marks = ",".join("?" for _ in family)
+                doi = con.execute(f"""SELECT value_normalized FROM paper_identifiers
+                    WHERE paper_id IN ({marks}) AND scheme='doi'
+                    ORDER BY value_normalized LIMIT 1""", family).fetchone()
+                duplicate_of = {
+                    "file_id": aid,
+                    "paper_id": pid,
+                    "title": paper.get("title"),
+                    "year": paper.get("year"),
+                    "doi": doi[0] if doi else None,
+                    "file_name": prior_location["display_name"] if prior_location else None,
+                    "file_uri": prior_location["canonical_uri"] if prior_location else None,
+                    "sha256": existing["sha256"],
+                }
+            return {"file_id": aid, "asset_id": aid, "paper_id": pid,
+                    "created": created, "duplicate_of": duplicate_of}
 
     @staticmethod
     def _location(con: sqlite3.Connection, asset_id: str, canonical_uri: str, original_uri: str | None,
