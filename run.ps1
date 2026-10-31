@@ -42,23 +42,58 @@ function Test-Dependencies([string]$Executable) {
     }
 }
 
-# PowerShell 5.1 wraps native stderr as NativeCommandError when merged with
-# stdout (2>&1). Keep native stdout live and render stderr as plain text after
-# the process exits. Exit codes, not stderr text, determine success/failure.
+# PowerShell 5.1 turns native stderr into NativeCommandError even when using
+# a redirection file. Use the .NET process APIs to keep stdout, stderr and
+# exit code separate. In particular, warnings on stderr do not imply failure.
 function Invoke-NativeLogged([string]$Executable, [string[]]$CommandArgs) {
-    $StderrFile = [System.IO.Path]::GetTempFileName()
-    $OldPreference = $ErrorActionPreference
-    try {
-        $ErrorActionPreference = 'Continue'
-        & $Executable @CommandArgs 2> $StderrFile | Out-Host
-        $ExitCode = $LASTEXITCODE
-        if ((Get-Item -LiteralPath $StderrFile).Length -gt 0) {
-            Get-Content -LiteralPath $StderrFile | ForEach-Object { Write-Host $_ }
+    # ProcessStartInfo.ArgumentList is unavailable in Windows PowerShell 5.1.
+    # Quote each argument using Windows command-line parsing rules.
+    function Quote-WindowsArgument([string]$Value) {
+        $Builder = New-Object System.Text.StringBuilder
+        [void]$Builder.Append([char]34)
+        $Backslashes = 0
+        foreach ($Character in $Value.ToCharArray()) {
+            if ($Character -eq [char]92) {
+                $Backslashes++
+                continue
+            }
+            if ($Character -eq [char]34) {
+                [void]$Builder.Append(('\' * (2 * $Backslashes + 1)))
+                [void]$Builder.Append([char]34)
+            } else {
+                [void]$Builder.Append(('\' * $Backslashes))
+                [void]$Builder.Append($Character)
+            }
+            $Backslashes = 0
         }
-        return [int]$ExitCode
+        [void]$Builder.Append(('\' * (2 * $Backslashes)))
+        [void]$Builder.Append([char]34)
+        return $Builder.ToString()
+    }
+
+    $StartInfo = New-Object System.Diagnostics.ProcessStartInfo
+    $StartInfo.FileName = $Executable
+    $StartInfo.Arguments = ((@($CommandArgs) | ForEach-Object { Quote-WindowsArgument $_ }) -join ' ')
+    $StartInfo.UseShellExecute = $false
+    $StartInfo.RedirectStandardOutput = $true
+    $StartInfo.RedirectStandardError = $true
+    $StartInfo.CreateNoWindow = $true
+
+    $Process = New-Object System.Diagnostics.Process
+    $Process.StartInfo = $StartInfo
+    try {
+        if (-not $Process.Start()) { throw "Failed to start $Executable" }
+        # Read both streams concurrently to avoid pipe-buffer deadlocks.
+        $OutTask = $Process.StandardOutput.ReadToEndAsync()
+        $ErrTask = $Process.StandardError.ReadToEndAsync()
+        $Process.WaitForExit()
+        $OutText = $OutTask.GetAwaiter().GetResult()
+        $ErrText = $ErrTask.GetAwaiter().GetResult()
+        if ($OutText) { Write-Host $OutText -NoNewline }
+        if ($ErrText) { Write-Host $ErrText -NoNewline }
+        return [int]$Process.ExitCode
     } finally {
-        $ErrorActionPreference = $OldPreference
-        Remove-Item -LiteralPath $StderrFile -Force -ErrorAction SilentlyContinue
+        $Process.Dispose()
     }
 }
 
