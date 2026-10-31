@@ -44,3 +44,14 @@ jobs:
           printf '%s\n' 'must retain' > .venv/sentinel.txt
           bash ./run.sh --check
           test "$(cat .venv/sentinel.txt)" = 'must retain'
+
+
+  import-ui:
+    name: Select-all import UI regression
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate actual JavaScript select-all behavior
+        run: |
+          node --check src/reference_topology/static/app.js
+          node tests/test_import_ui.cjs
