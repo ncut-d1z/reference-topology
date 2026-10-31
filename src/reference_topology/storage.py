@@ -975,6 +975,46 @@ class Store:
         with self.connection() as con:
             return [self._job_dict(r) for r in con.execute("SELECT * FROM jobs ORDER BY created_at DESC,id LIMIT ?", (max(1, min(int(limit), 500)),))]
 
+    def jobs_overview(self, limit: int = 100) -> dict:
+        """Bounded representative jobs plus exact status counts for the full queue.
+
+        Workers consume the oldest queued jobs first, so showing only the
+        newest 100 queued items hides every running and completed result.
+        """
+        limit = max(1, min(int(limit), 200))
+        with self.connection() as con:
+            counts = {status: 0 for status in
+                      ("queued", "running", "succeeded", "partial", "failed", "cancelled", "interrupted")}
+            for row in con.execute("SELECT status,COUNT(*) AS count FROM jobs GROUP BY status"):
+                counts[row["status"]] = row["count"]
+            items, seen = [], set()
+
+            def add_rows(sql: str, budget: int):
+                budget = min(budget, limit - len(items))
+                if budget <= 0:
+                    return
+                taken = 0
+                # Overfetch to account for items included in an earlier group.
+                for row in con.execute(sql, (min(limit * 2, max(budget * 2, 30)),)):
+                    if row["id"] in seen:
+                        continue
+                    seen.add(row["id"])
+                    items.append(self._job_dict(row))
+                    taken += 1
+                    if taken >= budget:
+                        break
+
+            add_rows("SELECT * FROM jobs WHERE status='running' ORDER BY updated_at DESC,id LIMIT ?", min(limit, 10))
+            add_rows("""SELECT * FROM jobs WHERE status IN
+                ('failed','partial','interrupted','succeeded','cancelled')
+                ORDER BY updated_at DESC,id LIMIT ?""", min(max(0, limit - len(items)), 30))
+            add_rows("SELECT * FROM jobs WHERE status='queued' ORDER BY created_at,id LIMIT ?", min(max(0, limit - len(items)), 35))
+            add_rows("SELECT * FROM jobs WHERE status='queued' ORDER BY created_at DESC,id DESC LIMIT ?", min(max(0, limit - len(items)), 15))
+            if len(items) < limit:
+                add_rows("SELECT * FROM jobs ORDER BY updated_at DESC,id LIMIT ?", limit - len(items))
+            return {"items": items[:limit], "counts": counts, "total": sum(counts.values()),
+                    "displayed": min(len(items), limit), "truncated": sum(counts.values()) > min(len(items), limit)}
+
     def cancel_job(self, job_id: str) -> dict:
         with self._write() as con:
             row = self._require(con, "jobs", job_id)
