@@ -46,8 +46,14 @@ def main():
         import uvicorn
         print(f"Reference Topology · http://{settings.host}:{settings.port}")
         print(f"本地数据目录：{settings.data_dir}")
-        uvicorn.run(create_app(settings), host=settings.host, port=settings.port, log_level="info",
-                    proxy_headers=False)
+        app = create_app(settings)
+        config = uvicorn.Config(app, host=settings.host, port=settings.port, log_level="info",
+                                proxy_headers=False)
+        server = uvicorn.Server(config)
+        # The web shutdown button requests Server.should_exit, not os._exit;
+        # shutdown then runs the normal lifespan cleanup and worker.stop().
+        app.state.uvicorn_server = server
+        server.run()
     except (ValueError, OSError, StoreError) as error:
         print(f"启动失败：{error}", file=sys.stderr)
         raise SystemExit(2)
