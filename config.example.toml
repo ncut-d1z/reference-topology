@@ -1,0 +1,24 @@
+[server]
+host = "127.0.0.1"
+port = 8765
+
+[storage]
+data_dir = ""  # 留空使用平台用户数据目录；不写到仓库
+
+[files]
+allowed_roots = []  # 例如 ["/home/user/Papers"] 或 ['D:\Papers']
+max_pdf_size_mb = 100
+max_pdf_pages = 1000
+
+[parser]
+engine = "python-rules"
+timeout_seconds = 120
+
+[parser.grobid]
+base_url = "http://127.0.0.1:8070"
+# 此版本强制关闭所有 consolidation，不向外部服务补全元数据。
+
+[graph]
+maximum_depth = 3
+maximum_nodes = 300
+maximum_edges = 1000

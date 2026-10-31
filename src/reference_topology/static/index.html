@@ -1,0 +1,124 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light">
+  <meta name="theme-color" content="#173c32">
+  <title>Reference Topology · 文献工作台</title>
+  <link rel="stylesheet" href="/static/styles.css">
+  <script src="/static/vendor/cytoscape.min.js" defer></script>
+  <script src="/static/app.js" defer></script>
+</head>
+<body>
+  <svg class="icon-library" aria-hidden="true" xmlns="http://www.w3.org/2000/svg">
+    <symbol id="i-library" viewBox="0 0 24 24"><path d="M4 4h4v16H4zM10 4h4v16h-4zM17 4l4 15-4 1-4-15"/></symbol>
+    <symbol id="i-graph" viewBox="0 0 24 24"><circle cx="5" cy="6" r="3"/><circle cx="19" cy="5" r="3"/><circle cx="15" cy="19" r="3"/><path d="M8 6h8M7 8l6 8M18 8l-2 8"/></symbol>
+    <symbol id="i-review" viewBox="0 0 24 24"><path d="M8 4H5a1 1 0 0 0-1 1v16h16V5a1 1 0 0 0-1-1h-3M8 2h8v5H8zM8 14l3 3 5-6"/></symbol>
+    <symbol id="i-task" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></symbol>
+    <symbol id="i-settings" viewBox="0 0 24 24"><path d="M4 7h16M4 17h16M8 4v6M16 14v6"/></symbol>
+    <symbol id="i-plus" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></symbol>
+    <symbol id="i-search" viewBox="0 0 24 24"><circle cx="10.5" cy="10.5" r="6.5"/><path d="m16 16 4.5 4.5"/></symbol>
+    <symbol id="i-file" viewBox="0 0 24 24"><path d="M14 3H5v18h14V8zM14 3v6h5M8 13h8M8 17h6"/></symbol>
+    <symbol id="i-folder" viewBox="0 0 24 24"><path d="M3 6V4h7l2 3h9v13H3z"/></symbol>
+    <symbol id="i-arrow" viewBox="0 0 24 24"><path d="M5 12h14m-6-6 6 6-6 6"/></symbol>
+    <symbol id="i-up" viewBox="0 0 24 24"><path d="M12 19V5m-6 6 6-6 6 6"/></symbol>
+    <symbol id="i-external" viewBox="0 0 24 24"><path d="M14 3h7v7M21 3 10 14M10 4H4v16h16v-6"/></symbol>
+    <symbol id="i-close" viewBox="0 0 24 24"><path d="m6 6 12 12M18 6 6 18"/></symbol>
+    <symbol id="i-check" viewBox="0 0 24 24"><path d="m5 12 4 4L19 6"/></symbol>
+    <symbol id="i-download" viewBox="0 0 24 24"><path d="M12 3v12m-5-5 5 5 5-5M4 16v5h16v-5"/></symbol>
+    <symbol id="i-upload" viewBox="0 0 24 24"><path d="M12 16V3m-5 5 5-5 5 5M4 16v5h16v-5"/></symbol>
+    <symbol id="i-refresh" viewBox="0 0 24 24"><path d="M20 10a8 8 0 0 0-14-5L3 8m0-5v5h5M4 14a8 8 0 0 0 14 5l3-3m0 5v-5h-5"/></symbol>
+    <symbol id="i-chevron" viewBox="0 0 24 24"><path d="m9 5 7 7-7 7"/></symbol>
+    <symbol id="i-info" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 11v6M12 7h.01"/></symbol>
+    <symbol id="i-fit" viewBox="0 0 24 24"><path d="M8 3H3v5m13-5h5v5M3 16v5h5m13-5v5h-5"/></symbol>
+    <symbol id="i-edit" viewBox="0 0 24 24"><path d="m15 4 5 5M4 20l5-1L21 7l-5-5L4 14z"/></symbol>
+  </svg>
+  <a class="skip-link" href="#main">跳到主内容</a>
+  <div class="app-shell">
+    <aside class="sidebar" aria-label="主导航">
+      <a href="#library" class="brand" aria-label="Reference Topology 文献库">
+        <span class="brand-mark"><svg class="icon" aria-hidden="true"><use href="#i-graph"/></svg></span>
+        <span class="brand-name">Reference<span>Topology</span></span>
+      </a>
+      <div class="workspace-label">个人研究空间</div>
+      <nav class="nav-list">
+        <a href="#library" data-view="library" class="nav-item active" aria-current="page"><svg class="icon"><use href="#i-library"/></svg><span>文献库</span><span id="nav-paper-count" class="nav-count">0</span></a>
+        <a href="#graph" data-view="graph" class="nav-item"><svg class="icon"><use href="#i-graph"/></svg><span>引用图谱</span></a>
+        <a href="#review" data-view="review" class="nav-item"><svg class="icon"><use href="#i-review"/></svg><span>参考文献复核</span></a>
+        <a href="#tasks" data-view="tasks" class="nav-item"><svg class="icon"><use href="#i-task"/></svg><span>解析任务</span><span id="nav-job-count" class="nav-count" hidden>0</span></a>
+      </nav>
+      <div class="sidebar-bottom">
+        <a href="#settings" data-view="settings" class="nav-item"><svg class="icon"><use href="#i-settings"/></svg><span>设置与维护</span></a>
+        <div class="local-status"><span class="status-dot"></span><div>本机工作台<span id="connection-label">正在连接服务</span></div></div>
+      </div>
+    </aside>
+    <div class="workspace">
+      <header class="topbar">
+        <div class="breadcrumb"><span>工作空间</span><svg class="icon"><use href="#i-chevron"/></svg><strong id="breadcrumb-name">文献库</strong></div>
+        <div class="topbar-actions"><span class="local-chip"><span></span> 本地存储</span><button class="button primary" id="open-import"><svg class="icon"><use href="#i-plus"/></svg>导入 PDF</button></div>
+      </header>
+      <main id="main" tabindex="-1">
+        <div id="global-error" class="message error" role="alert" hidden></div>
+        <section id="view-library" class="view" aria-labelledby="library-title">
+          <div class="page-heading"><div><div class="eyebrow">YOUR RESEARCH LIBRARY</div><h1 id="library-title">文献库</h1><p>从论文出发，连接每一条有据可查的引用。</p></div><button class="button subtle" id="refresh-library"><svg class="icon"><use href="#i-refresh"/></svg>刷新</button></div>
+          <div class="library-summary"><div><span id="stat-papers">0</span><span>篇文献</span></div><div><span id="stat-files">—</span><span>当前列表含 PDF</span></div><div><span id="stat-running">0</span><span>项处理中</span></div><span class="summary-note">文件、书目与引用证据，分别保留。</span></div>
+          <div id="merge-feedback" class="message merge-feedback" role="status" hidden></div>
+          <div class="library-layout" id="library-layout">
+            <div class="panel library-panel"><div class="panel-toolbar"><label class="search-field"><svg class="icon"><use href="#i-search"/></svg><input id="paper-search" type="search" placeholder="搜索标题、作者、年份或 DOI" aria-label="搜索文献" autocomplete="off"></label><span class="small-label" id="paper-results">全部文献</span></div><div id="paper-list" class="paper-list" aria-live="polite"></div><div class="pagination" id="paper-pagination" hidden><span id="page-summary"></span><div><button class="button compact" id="page-prev">上一页</button><button class="button compact" id="page-next">下一页</button></div></div></div>
+            <aside id="paper-detail" class="panel detail-panel" aria-label="文献详情" hidden></aside>
+          </div>
+        </section>
+        <section id="view-graph" class="view" aria-labelledby="graph-title" hidden>
+          <div class="page-heading"><div><div class="eyebrow">CITATION NETWORK</div><h1 id="graph-title">引用图谱</h1><p>箭头从引用者指向被引者。每条关系都可以回到原始证据。</p></div><button class="button subtle" id="export-graph"><svg class="icon"><use href="#i-download"/></svg>导出图数据</button></div>
+          <div class="panel graph-panel"><div class="graph-toolbar"><label>中心文献<select id="graph-center"><option value="">全部文献</option></select></label><label>方向<select id="graph-direction"><option value="both">引用与被引用</option><option value="out">参考文献</option><option value="in">已知施引文献</option></select></label><label>深度<select id="graph-depth"><option value="1">1 跳</option><option value="2">2 跳</option><option value="3">3 跳</option></select></label><label class="checkbox-label"><input id="graph-pending" type="checkbox" checked>显示待确认项</label><button class="button compact" id="refresh-graph"><svg class="icon"><use href="#i-refresh"/></svg>更新</button></div><div class="graph-body"><div class="graph-stage"><div id="graph-canvas" aria-label="文献引用网络，可点击节点或边查看详情"></div><div id="graph-empty" class="graph-overlay" hidden></div><div class="graph-controls"><button class="icon-button" id="graph-zoom-in" aria-label="放大图谱"><svg class="icon"><use href="#i-plus"/></svg></button><button class="icon-button" id="graph-zoom-out" aria-label="缩小图谱">−</button><button class="icon-button" id="graph-fit" aria-label="适合窗口"><svg class="icon"><use href="#i-fit"/></svg></button></div><div class="graph-legend"><span><i class="legend-node"></i>文献</span><span><i class="legend-edge"></i>已确认引用</span><span><i class="legend-edge pending"></i>待确认</span></div></div><aside id="graph-inspector" class="graph-inspector" aria-label="图谱详情"></aside></div><div class="graph-footer"><span id="graph-counts">尚未加载</span><span id="graph-coverage">范围：本地已知引用</span></div></div>
+        </section>
+        <section id="view-review" class="view" aria-labelledby="review-title" hidden>
+          <div class="page-heading"><div><div class="eyebrow">EVIDENCE & REVIEW</div><h1 id="review-title">参考文献复核</h1><p>对照原始条目确认文献身份。人工决定会保留在后续解析中。</p></div></div>
+          <div class="panel"><div class="review-toolbar"><label>来源文献<select id="review-paper"><option value="">选择一篇文献</option></select></label><label>显示状态<select id="review-filter"><option value="pending">待复核</option><option value="all">所有条目</option><option value="accepted">已确认</option><option value="rejected">已拒绝</option></select></label><button class="button compact" id="revise-references"><svg class="icon"><use href="#i-edit"/></svg>修订条目列表</button><button class="button compact" id="refresh-review"><svg class="icon"><use href="#i-refresh"/></svg>刷新</button></div><div id="review-list" class="review-list" aria-live="polite"></div></div>
+        </section>
+        <section id="view-tasks" class="view" aria-labelledby="tasks-title" hidden>
+          <div class="page-heading"><div><div class="eyebrow">PROCESSING ACTIVITY</div><h1 id="tasks-title">解析任务</h1><p>查看处理进度、结果与异常。解析结束后仍可继续复核条目。</p></div><button class="button subtle" id="refresh-tasks"><svg class="icon"><use href="#i-refresh"/></svg>刷新</button></div>
+          <div class="panel" id="task-list" aria-live="polite"></div>
+        </section>
+        <section id="view-settings" class="view" aria-labelledby="settings-title" hidden>
+          <div class="page-heading"><div><div class="eyebrow">WORKSPACE PREFERENCES</div><h1 id="settings-title">设置与维护</h1><p>管理本机论文目录、解析方式与数据备份。</p></div></div>
+          <div class="settings-grid"><form class="panel settings-card" id="settings-form"><div class="section-heading"><svg class="icon"><use href="#i-folder"/></svg><h2>文件与解析</h2></div><label class="field">允许访问的论文目录<textarea id="allowed-roots" rows="5" placeholder="每行一个本机绝对路径，例如 D:\Papers 或 /home/user/Papers" spellcheck="false"></textarea><span class="field-hint">工作台仅浏览和登记这些目录中的 PDF。原位文件保持只读。</span></label><label class="field">默认解析器<select id="parser-engine"><option value="python-rules">Python 本地规则解析</option><option value="grobid-local">本机 GROBID 服务</option></select><span class="field-hint" id="parser-hint">本地规则解析保留原文，不能确定的结果进入复核。</span></label><div id="settings-limits" class="settings-note"></div><div class="form-footer"><span id="settings-feedback" role="status"></span><button type="submit" class="button primary">保存设置</button></div></form>
+          <div class="settings-side"><section class="panel settings-card"><div class="section-heading"><svg class="icon"><use href="#i-download"/></svg><h2>数据导出</h2></div><p class="muted">导出书目或已知引用关系，用于其他研究工具。</p><div class="export-options"><button class="export-option" data-export="csl-json"><span><strong>CSL-JSON</strong><small>结构化书目信息</small></span><svg class="icon"><use href="#i-download"/></svg></button><button class="export-option" data-export="bibtex"><span><strong>BibTeX</strong><small>用于论文写作与引文管理</small></span><svg class="icon"><use href="#i-download"/></svg></button><button class="export-option" data-export="graph-json"><span><strong>Graph JSON</strong><small>文献节点与引用关系</small></span><svg class="icon"><use href="#i-download"/></svg></button></div></section><section class="panel settings-card"><div class="section-heading"><svg class="icon"><use href="#i-task"/></svg><h2>备份工作空间</h2></div><p class="muted">创建数据库与托管文件的一致备份。原位 PDF 仍需单独备份。</p><button id="create-backup" class="button">创建备份</button><div id="backup-result" class="backup-result" aria-live="polite"></div></section></div></div>
+        </section>
+      </main>
+      <footer class="workspace-footer"><span>REFERENCE TOPOLOGY</span><span>让引用有方向，让关系有依据。</span></footer>
+    </div>
+  </div>
+  <dialog id="import-dialog" class="modal import-modal" aria-labelledby="import-title"><div class="modal-header"><div><span class="eyebrow">ADD TO LIBRARY</span><h2 id="import-title">导入论文 PDF</h2></div><button class="icon-button" data-close-dialog="import-dialog" aria-label="关闭导入窗口"><svg class="icon"><use href="#i-close"/></svg></button></div><div class="modal-tabs" role="tablist" aria-label="导入方式"><button id="tab-linked" class="modal-tab active" role="tab" aria-selected="true" aria-controls="import-linked">登记原位文件<span>推荐</span></button><button id="tab-managed" class="modal-tab" role="tab" aria-selected="false" aria-controls="import-managed">上传托管副本</button></div><div class="modal-body"><div id="import-error" class="message error" role="alert" hidden></div><div id="import-linked" role="tabpanel" aria-labelledby="tab-linked"><p class="muted import-description">从允许目录中选择 PDF。原文件保留在原位置，工作台记录其 URI。</p><div class="browse-toolbar"><label class="sr-only" for="browse-root">允许目录</label><select id="browse-root"><option value="">选择论文目录</option></select><button class="button compact" id="browse-up"><svg class="icon"><use href="#i-up"/></svg>上一级</button></div><div id="browse-path" class="browse-path">/</div><div id="file-browser" class="file-browser" aria-live="polite"></div></div><div id="import-managed" role="tabpanel" aria-labelledby="tab-managed" hidden><p class="muted import-description">将文件复制到本机工作台的数据目录。浏览器不会提供原文件的真实绝对路径。</p><label class="dropzone" id="upload-zone" for="upload-input"><span class="upload-symbol"><svg class="icon"><use href="#i-upload"/></svg></span><strong>选择 PDF，或将文件拖到这里</strong><span>支持同时添加多份论文</span><input type="file" id="upload-input" accept="application/pdf,.pdf" multiple></label><div id="upload-list" class="upload-list" aria-live="polite"></div></div></div><div class="modal-footer"><span id="import-selection">尚未选择文件</span><div><button class="button" data-close-dialog="import-dialog">取消</button><button class="button primary" id="submit-import" disabled><svg class="icon"><use href="#i-plus"/></svg>导入并解析</button></div></div></dialog>
+  <dialog id="edit-dialog" class="modal small-modal" aria-labelledby="edit-title"><form id="edit-form"><div class="modal-header"><h2 id="edit-title">编辑文献信息</h2><button type="button" class="icon-button" data-close-dialog="edit-dialog" aria-label="关闭编辑窗口"><svg class="icon"><use href="#i-close"/></svg></button></div><div class="modal-body"><div id="edit-error" class="message error" role="alert" hidden></div><label class="field">标题<input id="edit-paper-title" required></label><label class="field">作者<input id="edit-authors" placeholder="多位作者用分号分隔"></label><div class="field-row"><label class="field">年份<input id="edit-year" type="number" min="1000" max="9999" placeholder="可留空"></label><label class="field">出版物<input id="edit-venue" placeholder="期刊或会议"></label></div><label class="field">DOI<input id="edit-doi" placeholder="例如 10.1234/example"></label><label class="field">备注 / 决定理由<input id="edit-reason" placeholder="可选"></label></div><div class="modal-footer"><span>保留原始解析证据</span><div><button type="button" class="button" data-close-dialog="edit-dialog">取消</button><button type="submit" class="button primary" id="edit-submit">保存</button></div></div></form></dialog>
+  <dialog id="merge-dialog" class="modal small-modal" aria-labelledby="merge-title">
+    <form id="merge-form">
+      <div class="modal-header"><h2 id="merge-title">合并重复文献</h2><button type="button" class="icon-button" data-close-dialog="merge-dialog" aria-label="关闭合并窗口"><svg class="icon"><use href="#i-close"/></svg></button></div>
+      <div class="modal-body">
+        <div id="merge-error" class="message error" role="alert" hidden></div>
+        <div class="merge-source"><span class="eyebrow">当前文献</span><p id="merge-source-title"></p></div>
+        <label class="field">合并到已有文献<select id="merge-target" required><option value="">选择保留身份的文献</option></select></label>
+        <p id="merge-preview" class="merge-preview muted">请选择确属同一篇论文的记录。</p>
+        <p class="message warning">当前文献会成为目标文献的别名，文件与引用证据将通过目标身份查询。预印本与正式版不应仅因标题相近就合并。</p>
+        <label class="field">合并理由<input id="merge-reason" placeholder="例如：相同 DOI，重复导入"></label>
+      </div>
+      <div class="modal-footer"><span>完成后可撤销本次合并</span><div><button type="button" class="button" data-close-dialog="merge-dialog">取消</button><button type="submit" class="button primary" id="merge-submit" disabled>合并到所选文献</button></div></div>
+    </form>
+  </dialog>
+  <dialog id="revision-dialog" class="modal import-modal" aria-labelledby="revision-title">
+    <form id="revision-form">
+      <div class="modal-header"><div><span class="eyebrow">REFERENCE LIST REVISION</span><h2 id="revision-title">修订参考条目列表</h2></div><button type="button" class="icon-button" data-close-dialog="revision-dialog" aria-label="关闭条目修订窗口"><svg class="icon"><use href="#i-close"/></svg></button></div>
+      <div class="modal-body">
+        <div id="revision-error" class="message error" role="alert" hidden></div>
+        <p id="revision-paper-title" class="revision-paper-title"></p>
+        <label class="field">来源 PDF 与当前解析快照<select id="revision-run" required><option value="">选择一个来源快照</option></select><span class="field-hint">每次只修订一个来源 PDF 的完整列表。切换来源会重新加载该来源的原始条目。</span></label>
+        <p class="message">保存时创建完整的人工修订快照，原始解析证据仍会保留，自动重新解析不会直接覆盖此列表。</p>
+        <label class="field">参考文献原文<textarea id="revision-text" rows="12" placeholder="每个空行分隔一条参考文献。条目内部可使用单次换行。" spellcheck="false"></textarea><span class="field-hint">请保留所选来源的全部条目；合并断裂条目或用空行拆分误合并项。本入口不接受空列表。</span></label>
+      </div>
+      <div class="modal-footer"><span id="revision-count">尚未选择来源</span><div><button type="button" class="button" data-close-dialog="revision-dialog">取消</button><button type="submit" class="button primary" id="revision-submit" disabled>保存完整修订</button></div></div>
+    </form>
+  </dialog>
+  <div id="toasts" class="toast-stack" role="status" aria-live="polite" aria-atomic="false"></div>
+</body>
+</html>
