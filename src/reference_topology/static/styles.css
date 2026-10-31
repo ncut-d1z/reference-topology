@@ -1669,6 +1669,99 @@ input[type="checkbox"] {
   color:#91a081
 }
 
+/* Import report: readable, scrollable per-file evidence rather than a toast. */
+.import-report {
+  border:1px solid var(--line);
+  border-radius:8px;
+  padding:15px 17px;
+  margin-bottom:22px;
+  background:#fff;
+  color:var(--text);
+  font-size:12px;
+  line-height:1.6
+}
+
+.import-report-heading {
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  gap:12px;
+  flex-wrap:wrap
+}
+
+.import-report-heading h3 {
+  font-size:14px;
+  color:#486c3c;
+  margin:0
+}
+
+.import-report-overview {
+  font-weight:600;
+  margin:10px 0 6px
+}
+
+.import-report-note {
+  color:#84917f;
+  font-size:11px;
+  margin:6px 0 12px
+}
+
+.import-report-group {
+  margin-top:10px;
+  border-top:1px solid #e6eddf;
+  padding-top:10px
+}
+
+.import-report-group summary {
+  cursor:pointer;
+  font-weight:600;
+  color:#566e4b;
+  outline-offset:3px
+}
+
+.import-report-failures summary {
+  color:#9a574b
+}
+
+.import-report-list {
+  margin:10px 0 0;
+  padding:0 0 0 22px;
+  max-height:260px;
+  overflow-y:auto;
+  overflow-x:hidden
+}
+
+.import-report-item {
+  border-bottom:1px solid #edf1e9;
+  padding:8px 8px 12px 0;
+  overflow-wrap:anywhere
+}
+
+.import-report-item:last-child {
+  border-bottom:0
+}
+
+.import-report-file {
+  font-size:12px;
+  color:#435744
+}
+
+.import-report-item p {
+  margin:5px 0 0
+}
+
+.import-report-item .button {
+  margin-top:7px
+}
+
+.import-report-uri,
+.import-report-code {
+  font-family:ui-monospace,"Cascadia Code",monospace;
+  font-size:10px;
+  color:#788874;
+  overflow-wrap:anywhere
+}
+
 .browse-toolbar {
   display:flex;
   gap:9px;
