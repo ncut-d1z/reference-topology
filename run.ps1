@@ -8,31 +8,37 @@ Set-Location -LiteralPath $PSScriptRoot
 
 $PythonExe = Join-Path $PSScriptRoot '.venv\Scripts\python.exe'
 if (-not (Test-Path -LiteralPath $PythonExe -PathType Leaf)) {
-    # Prefer the Windows Python launcher, then fall back to python on PATH.
     if (Get-Command py -ErrorAction SilentlyContinue) {
-        & py -3.12 -m venv .venv
+        & py -3.12 -m venv (Join-Path $PSScriptRoot '.venv')
     } else {
-        & python -m venv .venv
+        & python -m venv (Join-Path $PSScriptRoot '.venv')
     }
     if ($LASTEXITCODE -ne 0) {
-        throw '创建虚拟环境失败，请安装 Python 3.12 或更高版本。'
+        throw 'Failed to create Python virtual environment. Python 3.12+ is required.'
     }
 }
 
-# Keep the Python source separate from PowerShell's invocation syntax.
-$DependencyProbe = 'import fastapi, uvicorn, pypdf, pdfminer, multipart'
-& $PythonExe -c $DependencyProbe 2>$null
-$DependenciesAvailable = ($LASTEXITCODE -eq 0)
+# Probe dependencies without converting native stderr into a terminating error.
+$Probe = 'import fastapi, uvicorn, pypdf, pdfminer, multipart'
+$OldPreference = $ErrorActionPreference
+try {
+    $ErrorActionPreference = 'Continue'
+    & $PythonExe -c $Probe 2>$null | Out-Null
+    $DependenciesAvailable = ($LASTEXITCODE -eq 0)
+} finally {
+    $ErrorActionPreference = $OldPreference
+}
 
 if (-not $DependenciesAvailable) {
-    & $PythonExe -m pip install -r (Join-Path $PSScriptRoot 'requirements.txt')
+    # Dependencies are declared in pyproject.toml, not requirements.txt.
+    & $PythonExe -m pip install -e $PSScriptRoot
     if ($LASTEXITCODE -ne 0) {
-        throw '依赖安装失败，请检查网络与 Python 版本。'
+        throw 'Dependency installation failed. Check your Python version and network.'
     }
 }
 
-$ExistingPythonPath = [Environment]::GetEnvironmentVariable('PYTHONPATH')
 $SourcePath = Join-Path $PSScriptRoot 'src'
+$ExistingPythonPath = [Environment]::GetEnvironmentVariable('PYTHONPATH')
 if ([string]::IsNullOrEmpty($ExistingPythonPath)) {
     $env:PYTHONPATH = $SourcePath
 } else {
