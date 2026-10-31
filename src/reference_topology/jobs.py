@@ -3,6 +3,8 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
+from datetime import datetime, timezone
 import os
 from pathlib import Path
 import subprocess
@@ -12,11 +14,24 @@ import time
 import uuid
 
 
+_LOGGER = logging.getLogger(__name__)
+
+
 class JobRunner:
     def __init__(self, settings, store, files):
         self.settings, self.store, self.files = settings, store, files
         self._stop = threading.Event()
         self._thread = None
+        self._active_job_id = None
+        self._last_error = None
+        self._last_error_at = None
+        self._last_completed_at = None
+
+    def status(self) -> dict:
+        return {"alive": bool(self._thread and self._thread.is_alive()),
+                "stopping": self._stop.is_set(), "active_job_id": self._active_job_id,
+                "last_error": self._last_error, "last_error_at": self._last_error_at,
+                "last_completed_at": self._last_completed_at}
 
     def enqueue(self, file_id, paper_id, *, engine=None, force=False, request_key=None):
         engine = engine or self.settings.engine
@@ -48,19 +63,42 @@ class JobRunner:
     def stop(self):
         self._stop.set()
         if self._thread:
-            self._thread.join(timeout=6)
+            # Let the worker terminate its child parser and finish any SQLite
+            # transaction; do not abruptly kill the process or clear queued jobs.
+            self._thread.join(timeout=25)
+            if self._thread.is_alive():
+                _LOGGER.warning("Background worker is still stopping after 25 seconds")
 
     def _loop(self):
+        last_recovery, last_logged_error = 0.0, 0.0
         while not self._stop.is_set():
             try:
-                self.store.recover_jobs()
+                now = time.monotonic()
+                # Recover expired leases periodically, not on every 0.25s
+                # iteration; each call formerly acquired a SQLite writer lock.
+                if now - last_recovery >= 10:
+                    self.store.recover_jobs()
+                    last_recovery = now
                 job = self.store.claim_job(lease_seconds=30)
                 if job:
-                    self.run(job)
-            except Exception:
-                # A transient database failure must not permanently kill the queue.
+                    self._active_job_id = job["id"]
+                    try:
+                        self.run(job)
+                        finished = self.store.get_job(job["id"])
+                        if finished["status"] in ("succeeded", "partial", "failed", "interrupted"):
+                            self._last_completed_at = datetime.now(timezone.utc).isoformat()
+                    finally:
+                        self._active_job_id = None
+            except Exception as error:
+                # Surface worker failures through /api/jobs; silently ignoring
+                # database locks previously made a stalled queue look healthy.
+                self._last_error = f"{type(error).__name__}: {error}"[:500]
+                self._last_error_at = datetime.now(timezone.utc).isoformat()
+                if time.monotonic() - last_logged_error > 10:
+                    _LOGGER.exception("Background parse queue error; retrying")
+                    last_logged_error = time.monotonic()
                 self._stop.wait(1)
-            self._stop.wait(0.25)
+            self._stop.wait(0.4)
 
     def run(self, job):
         snapshot = None
