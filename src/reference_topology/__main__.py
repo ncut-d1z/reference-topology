@@ -11,6 +11,13 @@ from .storage import StoreError
 
 
 def main():
+    # Windows consoles and redirected CI pipes can use cp1252 (or another
+    # legacy codepage) that cannot represent Chinese startup messages and
+    # Unicode filesystem paths. Preserve the console's encoding, escaping
+    # only characters it cannot encode instead of aborting startup.
+    for stream in (sys.stdout, sys.stderr):
+        if hasattr(stream, "reconfigure"):
+            stream.reconfigure(errors="backslashreplace")
     parser = argparse.ArgumentParser(description="本地 PDF 与引用拓扑工作台")
     parser.add_argument("--config", type=Path, help="可选 TOML 配置文件")
     parser.add_argument("--data-dir", type=Path, help="本地数据目录（默认平台用户数据目录）")
