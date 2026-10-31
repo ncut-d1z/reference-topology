@@ -56,7 +56,7 @@
     <div class="workspace">
       <header class="topbar">
         <div class="breadcrumb"><span>工作空间</span><svg class="icon"><use href="#i-chevron"/></svg><strong id="breadcrumb-name">文献库</strong></div>
-        <div class="topbar-actions"><span class="local-chip"><span></span> 本地存储</span><button class="button primary" id="open-import"><svg class="icon"><use href="#i-plus"/></svg>导入 PDF</button></div>
+        <div class="topbar-actions"><span class="local-chip"><span></span> 本地存储</span><button class="button primary" id="open-import"><svg class="icon"><use href="#i-plus"/></svg>导入 PDF</button><button class="button close-workspace" id="shutdown-workspace" type="button" title="安全停止本机 Python 服务（不会删除数据库或论文）">关闭个人研究空间</button></div>
       </header>
       <main id="main" tabindex="-1">
         <div id="global-error" class="message error" role="alert" hidden></div>
@@ -79,7 +79,7 @@
         </section>
         <section id="view-tasks" class="view" aria-labelledby="tasks-title" hidden>
           <div class="page-heading"><div><div class="eyebrow">PROCESSING ACTIVITY</div><h1 id="tasks-title">解析任务</h1><p>查看处理进度、结果与异常。解析结束后仍可继续复核条目。</p></div><button class="button subtle" id="refresh-tasks"><svg class="icon"><use href="#i-refresh"/></svg>刷新</button></div>
-          <div class="panel" id="task-list" aria-live="polite"></div>
+          <div id="task-overview" class="task-overview" role="status" aria-live="polite">正在读取后台解析队列状态…</div><div class="panel" id="task-list" aria-live="polite"></div>
         </section>
         <section id="view-settings" class="view" aria-labelledby="settings-title" hidden>
           <div class="page-heading"><div><div class="eyebrow">WORKSPACE PREFERENCES</div><h1 id="settings-title">设置与维护</h1><p>管理本机论文目录、解析方式与数据备份。</p></div></div>
