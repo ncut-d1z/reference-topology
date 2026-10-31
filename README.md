@@ -55,7 +55,7 @@ python3.12 -m venv .venv
 .venv/bin/python -m reference_topology
 ```
 
-如果系统的 `python3` 已是 3.12 或更高版本，也可以使用启动脚本：
+启动脚本固定寻找 Python 3.12（避免现有 Python 3.14 环境缺少兼容的二进制依赖），可以运行：
 
 ```bash
 ./run.sh
@@ -69,7 +69,27 @@ py -3.12 -m venv .venv
 .\.venv\Scripts\python.exe -m reference_topology
 ```
 
-也提供 `run.ps1`。使用该脚本时，`python` 应指向 3.12 或更高版本；脚本首次运行会创建虚拟环境并安装依赖。上述显式命令不要求激活虚拟环境。
+也提供 `run.ps1`。两个启动脚本都会自动检测 Python 3.12；若原有 `.venv` 不是 Python 3.12，会保留其全部文件并在 `.venv-py312` 中创建独立环境，不会删改原环境。Windows 优先使用 `py -3.12`，必要时使用 PATH 中的 Python 3.12；请先确认已经安装 Python 3.12。上述显式命令不要求激活虚拟环境。
+
+### pip 安装镜像
+
+`run.ps1` 和 `run.sh` 的 **pip 默认源为清华 TUNA**：`https://pypi.tuna.tsinghua.edu.cn/simple`。仅影响脚本及其子进程，不会修改系统或用户级 pip 配置；Pip 的构建隔离过程也使用这一索引。若已经设置 `PIP_INDEX_URL`，启动脚本会尊重该显式值。例如临时切换为官方源：
+
+Windows PowerShell：
+
+```powershell
+$env:PIP_INDEX_URL = 'https://pypi.org/simple'
+.\run.ps1 --check
+Remove-Item Env:PIP_INDEX_URL
+```
+
+Linux：
+
+```bash
+PIP_INDEX_URL=https://pypi.org/simple ./run.sh --check
+```
+
+清华镜像的[官方说明](https://mirrors.tuna.tsinghua.edu.cn/help/pypi/)提及对欧盟用户的访问限制。如果镜像返回地区性拒绝访问，使用上述一次性环境变量覆盖方式即可，无需删除虚拟环境。**切换 pip 镜像不能解决 Python 版本不兼容，因此启动脚本强制选择 Python 3.12。**
 
 启动后打开 **<http://127.0.0.1:8765>**。停止服务使用终端的 `Ctrl+C`。默认仅监听本机回环地址，当前版本按单用户、单应用进程设计。
 
