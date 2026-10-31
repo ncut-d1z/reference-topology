@@ -39,12 +39,12 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw 'first check failed' }
           .\run.ps1 --check
           if ($LASTEXITCODE -ne 0) { throw 'repeat check failed' }
-          $actual = & .\.venv\Scripts\python.exe -c 'import sys; print("%d.%d" % sys.version_info[:2])'
+          $actual = & .\.venv\Scripts\python.exe -c 'import sys; print(str(sys.version_info.major) + chr(46) + str(sys.version_info.minor))'
           if ($actual -ne $env:EXPECTED_VERSION) { throw "Expected Python $env:EXPECTED_VERSION; got $actual" }
       - name: Preserve existing unrelated virtual environment
         shell: powershell
         run: |
-          $tag = & .\.venv\Scripts\python.exe -c 'import sys; print("%d%d" % sys.version_info[:2])'
+          $tag = & .\.venv\Scripts\python.exe -c 'import sys; print(sys.version_info.major * 100 + sys.version_info.minor)'
           Rename-Item -LiteralPath .venv -NewName ('.venv-py' + $tag)
           New-Item -ItemType Directory -Path .venv | Out-Null
           Set-Content -LiteralPath .venv\sentinel.txt -Value 'must retain'
