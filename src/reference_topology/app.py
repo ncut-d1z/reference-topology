@@ -96,13 +96,16 @@ def create_app(settings: Settings | None = None, *, run_worker: bool = True) -> 
     async def lifespan(app):
         if run_worker:
             runner.start()
-        yield
-        if run_worker:
-            runner.stop()
+        try:
+            yield
+        finally:
+            if run_worker:
+                runner.stop()
 
     app = FastAPI(title="Reference Topology", version=__version__, lifespan=lifespan,
                   docs_url=None, redoc_url=None, openapi_url=None)
     app.state.store, app.state.files, app.state.runner, app.state.settings = store, files, runner, settings
+    app.state.shutdown_requested = False
     app.add_middleware(LocalAccessMiddleware, settings=settings, session_id=session_id, csrf_token=csrf_token)
 
     @app.exception_handler(StoreError)
@@ -150,7 +153,7 @@ def create_app(settings: Settings | None = None, *, run_worker: bool = True) -> 
     @app.get("/api/health")
     def health():
         return {"status": "ok", "version": __version__, "schema_version": store.SCHEMA_VERSION,
-                "local_parser": True, "network_enabled": False}
+                "local_parser": True, "network_enabled": False, "worker": runner.status()}
 
     @app.get("/api/settings")
     def preferences():
@@ -268,7 +271,28 @@ def create_app(settings: Settings | None = None, *, run_worker: bool = True) -> 
 
     @app.get("/api/jobs")
     def jobs():
-        return {"items": store.list_jobs(limit=100)}
+        overview = store.jobs_overview(limit=100)
+        return {**overview, "worker": {**runner.status(), "enabled": bool(run_worker)}}
+
+    @app.post("/api/shutdown", status_code=202)
+    async def shutdown(request: Request):
+        # A session/CSRF-protected request is additionally restricted to a
+        # direct loopback client: an allowed proxy host is never enough to
+        # authorize stopping this local process.
+        peer = request.client.host if request.client else None
+        if peer not in {"127.0.0.1", "::1"} or request.url.hostname not in {"127.0.0.1", "localhost", "::1"}:
+            raise StoreError("shutdown_forbidden", "只能从本机浏览器关闭个人研究空间", 403)
+        server = getattr(request.app.state, "uvicorn_server", None)
+        if server is None:
+            raise StoreError("shutdown_unavailable", "当前服务不是受管理的本机进程，无法从网页关闭", 503)
+        if request.app.state.shutdown_requested:
+            return JSONResponse({"status": "stopping"}, status_code=202)
+        request.app.state.shutdown_requested = True
+        # Set the Uvicorn server flag only AFTER this HTTP response is sent.
+        # Its normal shutdown path runs FastAPI lifespan and stops the parser.
+        return JSONResponse({"status": "stopping", "message": "正在安全停止本机服务，已有队列和文献数据保持不变"},
+                            status_code=202,
+                            background=BackgroundTask(setattr, server, "should_exit", True))
 
     @app.get("/api/jobs/{job_id}")
     def job(job_id: str):
