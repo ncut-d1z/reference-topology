@@ -16,8 +16,8 @@ function Test-Python312([string]$Path) {
         return $false
     }
     try {
-        $Version = & $Path -c 'import sys; print(".".join(map(str, sys.version_info[:2])))' 2>$null
-        return ($LASTEXITCODE -eq 0 -and $Version -eq '3.12')
+        & $Path -c 'import sys; raise SystemExit(sys.version_info[:2] != (3, 12))' 2>$null | Out-Null
+        return ($LASTEXITCODE -eq 0)
     } catch {
         return $false
     }
@@ -51,8 +51,8 @@ if (Test-Python312 $DefaultPython) {
         $Created = ($LASTEXITCODE -eq 0)
     }
     if (-not $Created -and (Get-Command python -ErrorAction SilentlyContinue)) {
-        $SystemVersion = & python -c 'import sys; print(".".join(map(str, sys.version_info[:2])))'
-        if ($LASTEXITCODE -eq 0 -and $SystemVersion -eq '3.12') {
+        & python -c 'import sys; raise SystemExit(sys.version_info[:2] != (3, 12))' | Out-Null
+        if ($LASTEXITCODE -eq 0) {
             & python -m venv $VenvPath
             $Created = ($LASTEXITCODE -eq 0)
         }
