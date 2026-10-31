@@ -78,6 +78,15 @@ if (-not $PythonExe) {
     if (-not [string]::IsNullOrWhiteSpace($env:REFERENCE_TOPOLOGY_PYTHON)) {
         [void]$Candidates.Add($env:REFERENCE_TOPOLOGY_PYTHON)
     }
+    # Prefer python already selected on PATH (including an activated toolchain).
+    foreach ($CommandName in @('python', 'python3')) {
+        foreach ($CommandInfo in @(Get-Command $CommandName -All -ErrorAction SilentlyContinue)) {
+            $Candidate = $CommandInfo.Source
+            if ($Candidate -and -not $Candidates.Contains($Candidate)) {
+                [void]$Candidates.Add($Candidate)
+            }
+        }
+    }
     if (Get-Command py -ErrorAction SilentlyContinue) {
         $OldPreference = $ErrorActionPreference
         try {
@@ -95,15 +104,6 @@ if (-not $PythonExe) {
             }
         }
     }
-    foreach ($CommandName in @('python', 'python3')) {
-        foreach ($CommandInfo in @(Get-Command $CommandName -All -ErrorAction SilentlyContinue)) {
-            $Candidate = $CommandInfo.Source
-            if ($Candidate -and -not $Candidates.Contains($Candidate)) {
-                [void]$Candidates.Add($Candidate)
-            }
-        }
-    }
-
     $AttemptedVersions = New-Object 'System.Collections.Generic.HashSet[string]'
     foreach ($Interpreter in $Candidates) {
         if (-not (Test-PythonExecutable $Interpreter)) { continue }
