@@ -534,6 +534,42 @@
     updateSelectAllButton();
   }
 
+  // The API limits linked imports to 100 paths and uploads to 20 files.
+  // Submit large selections in bounded batches instead of rejecting "select all".
+  async function importSelectedBatches() {
+    const linked = state.importMode === "linked";
+    const selected = linked ? Array.from(state.selectedFiles) : [...state.uploads];
+    const batchSize = linked ? 100 : 20;
+    const combined = { items: [], errors: [], summary: { added: 0, duplicates: 0, failed: 0 } };
+    for (let start = 0; start < selected.length; start += batchSize) {
+      const chunk = selected.slice(start, start + batchSize);
+      let batch;
+      try {
+        if (linked) {
+          batch = await api("/api/files/register", {
+            method: "POST",
+            json: { root_id: state.rootId, paths: chunk, request_key: crypto.randomUUID() },
+          });
+        } else {
+          const form = new FormData();
+          for (const file of chunk) form.append("files", file, file.name);
+          form.append("request_key", crypto.randomUUID());
+          batch = await api("/api/files/upload", { method: "POST", body: form });
+        }
+      } catch (error) {
+        combined.errors.push({ path: `第 ${Math.floor(start / batchSize) + 1} 批`, message: errorMessage(error) });
+        break;
+      }
+      const items = itemsOf(batch);
+      combined.items.push(...items);
+      combined.errors.push(...(batch.errors || []));
+      combined.summary.added += batch.summary?.added ?? items.filter((item) => item.created !== false).length;
+      combined.summary.duplicates += batch.summary?.duplicates ?? items.filter((item) => item.created === false).length;
+    }
+    combined.summary.failed = combined.errors.length;
+    return combined;
+  }
+
   async function submitImport() {
     if (state.importBusy) return;
     state.importBusy = true; updateImportCount(); clearError("import-error");
@@ -547,15 +583,7 @@
         await refreshAfterChange();
         return;
       }
-      let result;
-      if (state.importMode === "linked") {
-        result = await api("/api/files/register", { method: "POST", json: { root_id: state.rootId, paths: Array.from(state.selectedFiles), request_key: crypto.randomUUID() } });
-      } else {
-        const form = new FormData();
-        for (const file of state.uploads) form.append("files", file, file.name);
-        form.append("request_key", crypto.randomUUID());
-        result = await api("/api/files/upload", { method: "POST", body: form });
-      }
+      const result = await importSelectedBatches();
       const imported = itemsOf(result);
       const errors = result.errors || [];
       const added = result.summary?.added ?? imported.filter((item) => item.created !== false).length;
