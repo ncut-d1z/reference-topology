@@ -185,3 +185,90 @@ def test_settings_persist_and_new_app_retains_file_identity(environment):
     with TestClient(app2, base_url="http://127.0.0.1:8765") as second:
         second.get("/api/session")
         assert second.get(f"/api/files/{imported['file_id']}/content").status_code == 200
+
+def test_bulk_import_deduplicates_identical_content_and_jobs(environment):
+    app, client, papers, settings = environment
+    original = pdf_bytes()
+    (papers / "first.pdf").write_bytes(original)
+    (papers / "different-name.pdf").write_bytes(original)
+    (papers / "another-paper.pdf").write_bytes(pdf_bytes("New Camera Paper", "10.9999/new.paper"))
+    payload = {
+        "root_id": settings.roots()[0]["id"],
+        "paths": ["first.pdf", "different-name.pdf", "another-paper.pdf", "different-name.pdf"],
+    }
+
+    first = client.post("/api/files/register", json=payload)
+    assert first.status_code == 202, first.text
+    result = first.json()
+    assert result["errors"] == []
+    assert result["summary"] == {"added": 2, "duplicates": 2, "failed": 0}
+    assert len(result["items"]) == 3  # Repeated relative path is processed once.
+    a, duplicate, b = result["items"]
+    assert a["created"] is True and a["job_id"]
+    assert duplicate["created"] is False and duplicate["duplicate"] is True
+    assert duplicate["job_id"] is None
+    assert b["created"] is True and b["job_id"]
+    assert (a["file_id"], a["paper_id"]) == (duplicate["file_id"], duplicate["paper_id"])
+    assert len(app.state.store.list_jobs()) == 2
+    assert app.state.store.list_papers()["total"] == 2
+
+    # A subsequent import registers no new paper, asset or automatic parse job.
+    second = client.post("/api/files/register", json=payload)
+    assert second.status_code == 202, second.text
+    assert second.json()["summary"] == {"added": 0, "duplicates": 4, "failed": 0}
+    assert all(not item["created"] and item["job_id"] is None for item in second.json()["items"])
+    assert len(app.state.store.list_jobs()) == 2
+    assert app.state.store.list_papers()["total"] == 2
+    asset = app.state.store.get_asset(a["file_id"])
+    assert len([p for p in asset["locations"] if p["is_current"]]) == 2
+
+
+def test_upload_deduplicates_same_pdf_under_different_names(environment):
+    app, client, papers, settings = environment
+    data = pdf_bytes()
+    first = client.post("/api/files/upload", files=[
+        ("files", ("one.pdf", data, "application/pdf")),
+        ("files", ("two.pdf", data, "application/pdf")),
+    ])
+    assert first.status_code == 202, first.text
+    result = first.json()
+    assert result["summary"] == {"added": 1, "duplicates": 1, "failed": 0}
+    a, duplicate = result["items"]
+    assert a["created"] and a["job_id"]
+    assert not duplicate["created"] and duplicate["job_id"] is None
+    assert a["file_id"] == duplicate["file_id"]
+    assert a["paper_id"] == duplicate["paper_id"]
+    assert len(list((settings.data_dir / "managed").glob("*.pdf"))) == 1
+
+    again = client.post("/api/files/upload", files=[("files", ("three.pdf", data, "application/pdf"))])
+    assert again.status_code == 202
+    assert again.json()["summary"] == {"added": 0, "duplicates": 1, "failed": 0}
+    assert len(app.state.store.list_jobs()) == 1
+    assert app.state.store.list_papers()["total"] == 1
+
+
+def test_upload_matching_linked_pdf_reuses_paper_but_adds_managed_location(environment):
+    app, client, papers, settings = environment
+    data = pdf_bytes()
+    (papers / "original.pdf").write_bytes(data)
+    linked = register(client, settings, "original.pdf")
+    response = client.post("/api/files/upload", files=[("files", ("backup.pdf", data, "application/pdf"))])
+    assert response.status_code == 202, response.text
+    result = response.json()
+    assert result["summary"] == {"added": 0, "duplicates": 1, "failed": 0}
+    uploaded = result["items"][0]
+    assert uploaded["file_id"] == linked["file_id"]
+    assert uploaded["paper_id"] == linked["paper_id"]
+    assert uploaded["job_id"] is None
+    assert app.state.store.list_papers()["total"] == 1
+    assert len(app.state.store.list_jobs()) == 1
+    locations = app.state.store.get_asset(linked["file_id"])["locations"]
+    assert {loc["location_kind"] for loc in locations if loc["is_current"]} == {"linked", "managed"}
+
+
+def test_import_dialog_has_select_all_control(environment):
+    app, client, papers, settings = environment
+    html = client.get("/").text
+    assert 'id="browse-select-all"' in html
+    assert 'aria-label="全选当前目录的 PDF"' in html
+    assert 'id="browse-up"' in html
