@@ -290,3 +290,91 @@ def test_index_uses_content_versioned_assets_and_never_caches_html(environment):
     assert script.status_code == 200
     assert "visiblePdfPaths" in script.text
     assert "toggleSelectAllVisible" in script.text
+
+def test_duplicate_import_reports_existing_file_paper_title_and_doi(environment):
+    app, client, papers, settings = environment
+    data = pdf_bytes("Named Original", "10.9999/named.original")
+    (papers / "old-name.pdf").write_bytes(data)
+    original = register(client, settings, "old-name.pdf")
+    run_jobs(app)
+    (papers / "new-name.pdf").write_bytes(data)
+
+    response = client.post("/api/files/register", json={
+        "root_id": settings.roots()[0]["id"], "paths": ["new-name.pdf"],
+    })
+    assert response.status_code == 202, response.text
+    result = response.json()
+    assert result["summary"] == {"added": 0, "duplicates": 1, "failed": 0}
+    duplicate = result["items"][0]
+    assert duplicate["name"] == "new-name.pdf"
+    assert duplicate["path"] == "new-name.pdf"
+    assert duplicate["duplicate_reason"] == "identical_content"
+    assert duplicate["job_id"] is None
+    previous = duplicate["duplicate_of"]
+    assert previous["paper_id"] == original["paper_id"]
+    assert previous["file_id"] == original["file_id"]
+    assert previous["title"] == "Named Original"
+    assert previous["doi"] == "10.9999/named.original"
+    assert previous["file_name"] == "old-name.pdf"
+    assert previous["file_uri"] == (papers / "old-name.pdf").as_uri()
+    assert len(previous["sha256"]) == 64
+    assert len(app.state.store.list_jobs()) == 1
+
+
+def test_duplicate_path_and_invalid_pdf_have_individual_import_details(environment):
+    app, client, papers, settings = environment
+    (papers / "same.pdf").write_bytes(pdf_bytes())
+    (papers / "bad-not-a-pdf.pdf").write_bytes(b"definitely not PDF content")
+    response = client.post("/api/files/register", json={
+        "root_id": settings.roots()[0]["id"],
+        "paths": ["same.pdf", "same.pdf", "bad-not-a-pdf.pdf"],
+    })
+    assert response.status_code == 202, response.text
+    result = response.json()
+    assert result["summary"] == {"added": 1, "duplicates": 1, "failed": 1}
+    assert len(result["items"]) == 1
+    assert len(result["skipped"]) == 1
+    skipped = result["skipped"][0]
+    assert skipped["path"] == "same.pdf"
+    assert skipped["duplicate_reason"] == "repeated_path"
+    assert skipped["duplicate_of"]["paper_id"] == result["items"][0]["paper_id"]
+    assert skipped["duplicate_of"]["file_name"] == "same.pdf"
+    assert len(result["errors"]) == 1
+    error = result["errors"][0]
+    assert error["name"] == "bad-not-a-pdf.pdf"
+    assert error["path"] == "bad-not-a-pdf.pdf"
+    assert error["code"] == "invalid_pdf"
+    assert "PDF" in error["message"]
+    assert app.state.store.list_papers()["total"] == 1
+
+
+def test_upload_duplicate_report_identifies_previous_linked_source(environment):
+    app, client, papers, settings = environment
+    data = pdf_bytes()
+    (papers / "library.pdf").write_bytes(data)
+    linked = register(client, settings, "library.pdf")
+    response = client.post("/api/files/upload", files=[
+        ("files", ("incoming-copy.pdf", data, "application/pdf")),
+        ("files", ("broken.pdf", b"bad content", "application/pdf")),
+    ])
+    assert response.status_code == 202, response.text
+    result = response.json()
+    assert result["summary"] == {"added": 0, "duplicates": 1, "failed": 1}
+    duplicated = result["items"][0]
+    assert duplicated["name"] == "incoming-copy.pdf"
+    assert duplicated["duplicate_reason"] == "identical_content"
+    assert duplicated["duplicate_of"]["paper_id"] == linked["paper_id"]
+    assert duplicated["duplicate_of"]["file_name"] == "library.pdf"
+    assert duplicated["duplicate_of"]["file_uri"] == (papers / "library.pdf").as_uri()
+    assert result["errors"][0]["name"] == "broken.pdf"
+    assert result["errors"][0]["code"] == "invalid_pdf"
+
+
+def test_import_page_includes_expandable_report_region(environment):
+    app, client, papers, settings = environment
+    html = client.get("/").text
+    assert 'id="import-report"' in html
+    assert 'aria-label="导入结果明细"' in html
+    source = client.get("/static/app.js").text
+    assert "renderImportReport(result)" in source
+    assert "downloadImportReport(result)" in source
