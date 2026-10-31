@@ -56,6 +56,14 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw 'repeat check failed' }
           $actual = & .\.venv\Scripts\python.exe -c 'import sys; print(str(sys.version_info.major) + chr(46) + str(sys.version_info.minor))'
           if ($actual -ne $env:EXPECTED_VERSION) { throw "Expected Python $env:EXPECTED_VERSION; got $actual" }
+      - name: Verify real Windows shutdown and SQLite read-lock regression
+        if: matrix.python-version == '3.12'
+        shell: pwsh
+        run: |
+          .\.venv\Scripts\python.exe -m pip install --disable-pip-version-check --index-url https://pypi.tuna.tsinghua.edu.cn/simple -e '.[test]'
+          if ($LASTEXITCODE -ne 0) { throw 'test dependencies installation failed' }
+          .\.venv\Scripts\python.exe -m pytest -q tests/test_integration.py -k 'graceful_http_shutdown or pdf_snapshot_does_not_need'
+          if ($LASTEXITCODE -ne 0) { throw 'Windows shutdown or SQLite snapshot test failed' }
       - name: Preserve existing unrelated virtual environment
         shell: powershell
         run: |
