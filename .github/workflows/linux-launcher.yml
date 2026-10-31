@@ -35,6 +35,7 @@ jobs:
           .venv/bin/python -m pip install --disable-pip-version-check --index-url https://pypi.tuna.tsinghua.edu.cn/simple -e '.[test]'
           .venv/bin/python -m pytest -q
           node --check src/reference_topology/static/app.js
+          node tests/test_import_ui.cjs
       - name: Preserve unrelated virtual environment
         run: |
           version_tag=$(.venv/bin/python -c 'import sys; print("%d%d" % sys.version_info[:2])')
