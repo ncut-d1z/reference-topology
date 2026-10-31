@@ -392,6 +392,7 @@
 
   async function openImport(options = {}) {
     clearError("import-error");
+    clearImportReport();
     state.rebindFile = options.rebind || null;
     $("import-title").textContent = state.rebindFile ? "重新定位论文 PDF" : "导入论文 PDF";
     $("tab-managed").hidden = Boolean(state.rebindFile);
@@ -683,7 +684,7 @@
     const linked = state.importMode === "linked";
     const selected = linked ? Array.from(state.selectedFiles) : [...state.uploads];
     const batchSize = linked ? 100 : 20;
-    const combined = { items: [], errors: [], summary: { added: 0, duplicates: 0, failed: 0 } };
+    const combined = { items: [], errors: [], skipped: [], summary: { added: 0, duplicates: 0, failed: 0 } };
     for (let start = 0; start < selected.length; start += batchSize) {
       const chunk = selected.slice(start, start + batchSize);
       let batch;
@@ -700,12 +701,24 @@
           batch = await api("/api/files/upload", { method: "POST", body: form });
         }
       } catch (error) {
-        combined.errors.push({ path: `第 ${Math.floor(start / batchSize) + 1} 批`, message: errorMessage(error) });
+        // A request may have been partly processed before a network failure.
+        // Identify every affected file without claiming its import failed.
+        for (const file of chunk) {
+          const filePath = linked ? file : file.name;
+          combined.errors.push({
+            path: filePath,
+            name: linked ? file.split("/").pop() : file.name,
+            code: "batch_status_unknown",
+            message: "第 " + (Math.floor(start / batchSize) + 1) + " 批未返回完整结果：" +
+              errorMessage(error) + "。该文件是否已登记无法确认；检查文献库后可安全重试（按 SHA-256 去重）。",
+          });
+        }
         break;
       }
       const items = itemsOf(batch);
       combined.items.push(...items);
       combined.errors.push(...(batch.errors || []));
+      combined.skipped.push(...(batch.skipped || []));
       combined.summary.added += batch.summary?.added ?? items.filter((item) => item.created !== false).length;
       combined.summary.duplicates += batch.summary?.duplicates ?? items.filter((item) => item.created === false).length;
     }
@@ -715,7 +728,7 @@
 
   async function submitImport() {
     if (state.importBusy) return;
-    state.importBusy = true; updateImportCount(); clearError("import-error");
+    state.importBusy = true; updateImportCount(); clearError("import-error"); clearImportReport();
     const submit = $("submit-import");
     submit.textContent = "正在登记…";
     try {
@@ -730,19 +743,22 @@
       const imported = itemsOf(result);
       const errors = result.errors || [];
       const added = result.summary?.added ?? imported.filter((item) => item.created !== false).length;
-      const duplicates = result.summary?.duplicates ?? imported.filter((item) => item.duplicate || item.created === false).length;
-      const status = `新增 ${added} 份，跳过重复 ${duplicates} 份，失败 ${errors.length} 份。`;
-      if (errors.length) {
-        showError("import-error", new Error(`${status}\n${errors.map((error) => typeof error === "string" ? error : `${error.path || error.filename || error.name || "文件"}：${error.message || error.error?.message || "登记失败"}`).join("\n")}`));
+      const duplicates = result.summary?.duplicates ?? importDuplicates(result).length;
+      const status = "新增 " + added + " 份，跳过重复 " + duplicates + " 份，失败或待核实 " + errors.length + " 份。";
+      const showDetails = duplicates > 0 || errors.length > 0;
+      if (showDetails) {
+        renderImportReport(result);
+        // Keep the results visible so the user can inspect and export them.
+        $("import-dialog").scrollTop = 0;
       } else {
         $("import-dialog").close();
-        toast(`导入完成：${status}${added ? " 已为新增 PDF 安排解析任务。" : ""}`);
+        toast("导入完成：" + status + (added ? " 已为新增 PDF 安排解析任务。" : ""));
       }
       if (imported.length) {
         state.query = ""; state.offset = 0; $("paper-search").value = "";
         await loadPapers(); await updatePaperSelectors(); await loadJobs();
         const firstNew = imported.find((item) => item.created !== false);
-        if (firstNew?.paper_id) await selectPaper(firstNew.paper_id, { navigate: !errors.length });
+        if (firstNew?.paper_id) await selectPaper(firstNew.paper_id, { navigate: !showDetails });
       }
     } catch (error) { showError("import-error", error); }
     finally { state.importBusy = false; submit.replaceChildren(icon(state.rebindFile ? "folder" : "plus"), document.createTextNode(state.rebindFile ? "核验并重新关联" : "导入并解析")); updateImportCount(); }
