@@ -378,3 +378,34 @@ def test_import_page_includes_expandable_report_region(environment):
     source = client.get("/static/app.js").text
     assert "renderImportReport(result)" in source
     assert "downloadImportReport(result)" in source
+
+def test_http_jobs_filter_by_status_and_paginate(environment):
+    app, client, papers, settings = environment
+    for index in range(66):
+        app.state.store.create_job("parse", request_key=f"http-filter-{index}",
+                                   work_key=f"http-filter-work-{index}", input_data={"number": index})
+    running = app.state.store.claim_job()
+    app.state.store.update_job(running["id"], lease_token=running["lease_token"], status="failed",
+                               error_code="test_failure", error_message="synthetic")
+    first = client.get("/api/jobs?status=failed&limit=10&offset=0")
+    assert first.status_code == 200, first.text
+    payload = first.json()
+    assert payload["total"] == 66
+    assert payload["filtered_total"] == 1
+    assert payload["status"] == "failed"
+    assert len(payload["items"]) == 1
+    assert payload["items"][0]["id"] == running["id"]
+    assert payload["counts"]["queued"] == 65
+    assert "worker" in payload
+
+    page = client.get("/api/jobs?status=queued&limit=20&offset=40").json()
+    assert page["total"] == 66
+    assert page["filtered_total"] == 65
+    assert page["offset"] == 40
+    assert page["limit"] == 20
+    assert len(page["items"]) == 20
+    assert all(job["status"] == "queued" for job in page["items"])
+    assert page["truncated"] is True
+    assert client.get("/api/jobs?status=unsupported").status_code == 400
+    assert client.get("/api/jobs?offset=-1").status_code == 422
+    assert client.get("/api/jobs?limit=101").status_code == 422
