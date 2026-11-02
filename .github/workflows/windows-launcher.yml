@@ -1,0 +1,83 @@
+name: Windows launcher smoke test
+
+on:
+  pull_request:
+  push:
+    branches:
+      - feat/local-reference-workbench
+
+jobs:
+  windows-launcher:
+    runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ['3.12', '3.13']
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+      - name: Parse script with Windows PowerShell 5.1
+        shell: powershell
+        run: |
+          $bytes = [System.IO.File]::ReadAllBytes((Resolve-Path .\run.ps1).Path)
+          if ($bytes | Where-Object { $_ -gt 127 }) { throw 'Script must stay ASCII for PowerShell 5.1' }
+          $tokens = $null
+          $errors = $null
+          [System.Management.Automation.Language.Parser]::ParseFile((Resolve-Path .\run.ps1).Path, [ref]$tokens, [ref]$errors) | Out-Null
+          if ($errors.Count -gt 0) {
+            $errors | ForEach-Object { Write-Host $_.ToString() }
+            throw 'PowerShell syntax errors'
+          }
+      - name: Native stderr is not a PowerShell failure
+        shell: powershell
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $tokens = $null
+          $errors = $null
+          $ast = [System.Management.Automation.Language.Parser]::ParseFile((Resolve-Path .\run.ps1).Path, [ref]$tokens, [ref]$errors)
+          $definition = $ast.FindAll({ param($node) $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -eq 'Invoke-NativeLogged' }, $true) | Select-Object -First 1
+          if (-not $definition) { throw 'Missing Invoke-NativeLogged' }
+          . ([scriptblock]::Create($definition.Extent.Text))
+          $pythonExe = (Get-Command python).Path
+          $successCode = Invoke-NativeLogged $pythonExe @('-c', 'import sys; sys.stderr.write(chr(65)); sys.exit(0)')
+          if ($successCode -ne 0) { throw 'Benign stderr was treated as failure' }
+          $failureCode = Invoke-NativeLogged $pythonExe @('-c', 'import sys; sys.stderr.write(chr(66)); sys.exit(17)')
+          if ($failureCode -ne 17) { throw 'Native error exit code was lost' }
+      - name: Start twice with installed interpreter
+        shell: powershell
+        env:
+          EXPECTED_VERSION: ${{ matrix.python-version }}
+        run: |
+          .\run.ps1 --check
+          if ($LASTEXITCODE -ne 0) { throw 'first check failed' }
+          .\run.ps1 --check
+          if ($LASTEXITCODE -ne 0) { throw 'repeat check failed' }
+          $actual = & .\.venv\Scripts\python.exe -c 'import sys; print(str(sys.version_info.major) + chr(46) + str(sys.version_info.minor))'
+          if ($actual -ne $env:EXPECTED_VERSION) { throw "Expected Python $env:EXPECTED_VERSION; got $actual" }
+      - name: Verify real Windows shutdown and SQLite read-lock regression
+        if: matrix.python-version == '3.12'
+        shell: pwsh
+        run: |
+          .\.venv\Scripts\python.exe -m pip install --disable-pip-version-check --index-url https://pypi.tuna.tsinghua.edu.cn/simple -e '.[test]'
+          if ($LASTEXITCODE -ne 0) { throw 'test dependencies installation failed' }
+          .\.venv\Scripts\python.exe -m pytest -q tests/test_integration.py -k 'graceful_http_shutdown or pdf_snapshot_does_not_need'
+          if ($LASTEXITCODE -ne 0) { throw 'Windows shutdown or SQLite snapshot test failed' }
+      - name: Preserve existing unrelated virtual environment
+        shell: powershell
+        run: |
+          $tag = & .\.venv\Scripts\python.exe -c 'import sys; print(sys.version_info.major * 100 + sys.version_info.minor)'
+          Rename-Item -LiteralPath .venv -NewName ('.venv-py' + $tag)
+          New-Item -ItemType Directory -Path .venv | Out-Null
+          Set-Content -LiteralPath .venv\sentinel.txt -Value 'must retain'
+          .\run.ps1 --check
+          if ($LASTEXITCODE -ne 0) { throw 'saved environment check failed' }
+          if ((Get-Content -LiteralPath .venv\sentinel.txt -Raw).Trim() -ne 'must retain') {
+            throw 'The unrelated .venv was modified'
+          }
+      - name: Check PowerShell 7
+        shell: pwsh
+        run: |
+          .\run.ps1 --check
+          if ($LASTEXITCODE -ne 0) { throw 'PowerShell 7 check failed' }

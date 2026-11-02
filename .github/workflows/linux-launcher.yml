@@ -1,0 +1,61 @@
+name: Linux launcher smoke test
+
+on:
+  pull_request:
+  push:
+    branches:
+      - feat/local-reference-workbench
+
+jobs:
+  linux-launcher:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ['3.12', '3.13']
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+      - name: Check bash syntax and mirror
+        run: |
+          bash -n run.sh
+          grep -Fq 'https://pypi.tuna.tsinghua.edu.cn/simple' run.sh
+      - name: Launch twice with chosen interpreter
+        env:
+          EXPECTED_VERSION: ${{ matrix.python-version }}
+        run: |
+          bash ./run.sh --check
+          bash ./run.sh --check
+          test "$(.venv/bin/python -c 'import sys; print("%d.%d" % sys.version_info[:2])')" = "$EXPECTED_VERSION"
+      - name: Test import dedup and validate browser JavaScript
+        if: matrix.python-version == '3.12'
+        run: |
+          .venv/bin/python -m pip install --disable-pip-version-check --index-url https://pypi.tuna.tsinghua.edu.cn/simple -e '.[test]'
+          .venv/bin/python -m pytest -q
+          node --check src/reference_topology/static/app.js
+          node tests/test_import_ui.cjs
+          node tests/test_import_report_ui.cjs
+          node tests/test_jobs_ui.cjs
+      - name: Preserve unrelated virtual environment
+        run: |
+          version_tag=$(.venv/bin/python -c 'import sys; print("%d%d" % sys.version_info[:2])')
+          mv .venv ".venv-py$version_tag"
+          mkdir .venv
+          printf '%s\n' 'must retain' > .venv/sentinel.txt
+          bash ./run.sh --check
+          test "$(cat .venv/sentinel.txt)" = 'must retain'
+
+
+  import-ui:
+    name: Select-all import UI regression
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate actual JavaScript select-all behavior
+        run: |
+          node --check src/reference_topology/static/app.js
+          node tests/test_import_ui.cjs
+          node tests/test_import_report_ui.cjs
+          node tests/test_jobs_ui.cjs
