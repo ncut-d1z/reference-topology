@@ -23,6 +23,7 @@
     paperRequest: 0, detailRequest: 0, reviewRequest: 0, graphRequest: 0,
     importBusy: false, rebindFile: null, polling: false, initialized: false,
     jobsCounts: {}, jobsTotal: 0, jobsWorker: null, shuttingDown: false,
+    jobFilter: "all", jobOffset: 0, jobPageSize: 30, jobsFilteredTotal: 0,
     mergeSource: null, lastMerge: null, revisionContext: null,
   };
 
@@ -1173,32 +1174,64 @@
     } catch (error) { box.append(element("p", "", errorMessage(error))); }
   }
 
-  // Single-flight job polling: a manual refresh and the 3.5-second poll
-  // must share a request rather than issuing two /api/jobs GETs.
+  // Coalesce requests only for the SAME status/page. Changing filters
+  // launches a new query; late responses from previous filters are ignored.
   let jobsFetch = null;
+  let jobsFetchKey = "";
   let jobsLastFetchedAt = 0;
+  let jobsLastKey = "";
+
+  function jobsQueryKey() {
+    return [state.jobFilter, state.jobOffset, state.jobPageSize].join(":");
+  }
+
+  function renderJobFilterControls() {
+    const counts = state.jobsCounts || {};
+    const select = $("task-status-filter");
+    select.value = state.jobFilter;
+    for (const option of select.options) {
+      const label = option.value === "all" ? "全部状态" : (STATUS[option.value]?.[0] || option.value);
+      const total = option.value === "all" ? state.jobsTotal : (counts[option.value] || 0);
+      option.textContent = label + "（" + total + "）";
+    }
+    const start = state.jobsFilteredTotal ? state.jobOffset + 1 : 0;
+    const end = Math.min(state.jobOffset + state.jobs.length, state.jobsFilteredTotal);
+    $("task-filter-summary").textContent = "符合条件 " + state.jobsFilteredTotal +
+      " 项，当前显示 " + start + "–" + end + " 项";
+    const pages = Math.max(1, Math.ceil(state.jobsFilteredTotal / state.jobPageSize));
+    $("task-pagination").hidden = pages <= 1;
+    $("task-page-summary").textContent = "第 " + (Math.floor(state.jobOffset / state.jobPageSize) + 1) +
+      " / " + pages + " 页";
+    $("task-prev").disabled = state.jobOffset === 0;
+    $("task-next").disabled = state.jobOffset + state.jobPageSize >= state.jobsFilteredTotal;
+  }
 
   async function loadJobs(forceRender = false) {
     if (state.shuttingDown) return;
-    if (jobsFetch) {
+    const key = jobsQueryKey();
+    if (jobsFetch && jobsFetchKey === key) {
       await jobsFetch;
       if (forceRender && state.view === "tasks") renderJobs();
       return;
     }
-    // Also coalesce requests issued immediately after a completed poll
-    // (e.g. bootstrap followed by navigating to the task page).
-    if (Date.now() - jobsLastFetchedAt < 850) {
+    if (key === jobsLastKey && Date.now() - jobsLastFetchedAt < 850) {
       if (forceRender && state.view === "tasks") renderJobs();
       return;
     }
+    const status = state.jobFilter;
+    const offset = state.jobOffset;
+    const limit = state.jobPageSize;
     const request = (async () => {
-      const result = await api("/api/jobs");
+      const params = new URLSearchParams({ status, offset: String(offset), limit: String(limit) });
+      const result = await api("/api/jobs?" + params);
+      // A filter or page change while this request was pending invalidates it.
+      if (key !== jobsQueryKey() || state.shuttingDown) return;
       const jobs = itemsOf(result);
       const counts = result.counts || {};
       const previousCounts = state.jobsCounts || {};
       const signature = JSON.stringify({
-        jobs: jobs.map((job) => [job.id, job.status, job.progress_current, job.progress_total, job.updated_at]),
-        counts, worker: result.worker,
+        key, jobs: jobs.map((job) => [job.id, job.status, job.progress_current, job.progress_total, job.updated_at]),
+        counts, worker: result.worker, filteredTotal: result.filtered_total,
       });
       const changed = state.jobsSignature !== signature;
       const wasInitialized = state.jobsSignature !== "";
@@ -1212,6 +1245,8 @@
       state.jobs = jobs;
       state.jobsCounts = counts;
       state.jobsTotal = result.total ?? jobs.length;
+      state.jobsFilteredTotal = result.filtered_total ??
+        (status === "all" ? state.jobsTotal : (counts[status] || 0));
       state.jobsWorker = result.worker || null;
       state.jobsSignature = signature;
       const queuedAndRunning = (counts.queued || 0) + (counts.running || 0);
@@ -1220,14 +1255,17 @@
       $("nav-job-count").hidden = !active;
       $("stat-running").textContent = active;
       renderJobOverview();
+      renderJobFilterControls();
       if (changed && state.view === "tasks") renderJobs();
       if (completed) await refreshAfterChange();
       jobsLastFetchedAt = Date.now();
+      jobsLastKey = key;
     })();
     jobsFetch = request;
+    jobsFetchKey = key;
     try {
       await request;
-      if (forceRender && state.view === "tasks") renderJobs();
+      if (forceRender && state.view === "tasks" && key === jobsQueryKey()) renderJobs();
     } finally {
       if (jobsFetch === request) jobsFetch = null;
     }
@@ -1262,7 +1300,19 @@
 
   function renderJobs() {
     if (!state.jobs.length) {
-      emptyState($("task-list"), { title: "暂无解析任务", description: "导入 PDF 后，后台任务将在这里显示。你可以查看进度、异常和处理结果。", symbol: "task", action: { label: "导入 PDF", icon: "plus", onClick: openImport } });
+      const filtered = state.jobFilter !== "all";
+      emptyState($("task-list"), filtered ? {
+        title: "此状态下暂无任务",
+        description: "当前没有符合筛选条件的解析任务，可以选择其他状态。",
+        symbol: "task",
+        action: { label: "查看全部任务", onClick: () => {
+          state.jobFilter = "all"; state.jobOffset = 0;
+          $("task-status-filter").value = "all"; loadJobs(true);
+        } },
+      } : {
+        title: "暂无解析任务", description: "导入 PDF 后，后台任务将在这里显示。你可以查看进度、异常和处理结果。",
+        symbol: "task", action: { label: "导入 PDF", icon: "plus", onClick: openImport },
+      });
       return;
     }
     const fragment = document.createDocumentFragment();
@@ -1438,6 +1488,20 @@
     $("page-prev").addEventListener("click", () => { state.offset = Math.max(0, state.offset - state.pageSize); loadPapers(); });
     $("page-next").addEventListener("click", () => { state.offset += state.pageSize; loadPapers(); });
     $("refresh-tasks").addEventListener("click", (event) => actionWithButton(event.currentTarget, () => loadJobs(true)));
+    $("task-status-filter").addEventListener("change", () => {
+      state.jobFilter = $("task-status-filter").value;
+      state.jobOffset = 0;
+      loadJobs(true).catch((error) => toast(errorMessage(error), true));
+    });
+    $("task-prev").addEventListener("click", () => {
+      state.jobOffset = Math.max(0, state.jobOffset - state.jobPageSize);
+      loadJobs(true).catch((error) => toast(errorMessage(error), true));
+    });
+    $("task-next").addEventListener("click", () => {
+      if (state.jobOffset + state.jobPageSize >= state.jobsFilteredTotal) return;
+      state.jobOffset += state.jobPageSize;
+      loadJobs(true).catch((error) => toast(errorMessage(error), true));
+    });
     $("review-paper").addEventListener("change", () => { state.reviewPaper = $("review-paper").value; loadReview(); });
     $("review-filter").addEventListener("change", renderReview);
     $("refresh-review").addEventListener("click", () => loadReview());
