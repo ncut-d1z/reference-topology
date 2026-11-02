@@ -270,8 +270,9 @@ def create_app(settings: Settings | None = None, *, run_worker: bool = True) -> 
         return {**job, "job_id": job["id"]}
 
     @app.get("/api/jobs")
-    def jobs():
-        overview = store.jobs_overview(limit=100)
+    def jobs(status: str = "all", limit: int = Query(default=30, ge=1, le=100),
+             offset: int = Query(default=0, ge=0)):
+        overview = store.query_jobs(status=status, limit=limit, offset=offset)
         return {**overview, "worker": {**runner.status(), "enabled": bool(run_worker)}}
 
     @app.post("/api/shutdown", status_code=202)
