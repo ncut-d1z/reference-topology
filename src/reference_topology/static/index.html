@@ -79,7 +79,7 @@
         </section>
         <section id="view-tasks" class="view" aria-labelledby="tasks-title" hidden>
           <div class="page-heading"><div><div class="eyebrow">PROCESSING ACTIVITY</div><h1 id="tasks-title">解析任务</h1><p>查看处理进度、结果与异常。解析结束后仍可继续复核条目。</p></div><button class="button subtle" id="refresh-tasks"><svg class="icon"><use href="#i-refresh"/></svg>刷新</button></div>
-          <div id="task-overview" class="task-overview" role="status" aria-live="polite">正在读取后台解析队列状态…</div><div class="panel" id="task-list" aria-live="polite"></div>
+          <div id="task-overview" class="task-overview" role="status" aria-live="polite">正在读取后台解析队列状态…</div><div class="task-filter-toolbar"><label for="task-status-filter">结果状态</label><select id="task-status-filter" aria-label="按解析任务状态筛选"><option value="all">全部状态</option><option value="queued">等待处理</option><option value="running">正在解析</option><option value="succeeded">处理完成</option><option value="partial">部分完成</option><option value="failed">处理失败</option><option value="interrupted">已中断</option><option value="cancelled">已取消</option></select><span id="task-filter-summary" role="status">正在读取任务列表…</span></div><div class="panel" id="task-list" aria-live="polite"></div><div id="task-pagination" class="task-pagination" hidden><button class="button compact" id="task-prev" type="button">上一页</button><span id="task-page-summary"></span><button class="button compact" id="task-next" type="button">下一页</button></div>
         </section>
         <section id="view-settings" class="view" aria-labelledby="settings-title" hidden>
           <div class="page-heading"><div><div class="eyebrow">WORKSPACE PREFERENCES</div><h1 id="settings-title">设置与维护</h1><p>管理本机论文目录、解析方式与数据备份。</p></div></div>
