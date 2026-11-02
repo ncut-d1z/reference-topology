@@ -1053,6 +1053,45 @@ class Store:
             return {"items": items[:limit], "counts": counts, "total": sum(counts.values()),
                     "displayed": min(len(items), limit), "truncated": sum(counts.values()) > min(len(items), limit)}
 
+    def query_jobs(self, status: str = "all", limit: int = 30, offset: int = 0) -> dict:
+        """Page through the entire durable queue, never only displayed samples.
+
+        Counts always describe all jobs. Filtering and pagination happen inside
+        SQLite, not over the first N records returned to the browser.
+        """
+        valid = {"all", "queued", "running", "succeeded", "partial",
+                 "failed", "cancelled", "interrupted"}
+        if status not in valid:
+            raise StoreError("invalid_job_status", "未知解析任务状态", 400)
+        limit = max(1, min(int(limit), 100))
+        offset = max(0, int(offset))
+        with self.connection() as con:
+            counts = {name: 0 for name in valid if name != "all"}
+            for row in con.execute("SELECT status, COUNT(*) AS count FROM jobs GROUP BY status"):
+                counts[row["status"]] = row["count"]
+            total = sum(counts.values())
+            filtered_total = total if status == "all" else counts[status]
+            if status == "all":
+                # Currently running jobs first, then latest outcomes, then
+                # queued tasks in their actual FIFO processing order.
+                rows = con.execute("""SELECT * FROM jobs ORDER BY
+                    CASE WHEN status='running' THEN 0
+                         WHEN status='queued' THEN 2 ELSE 1 END,
+                    CASE WHEN status='queued' THEN created_at END ASC,
+                    CASE WHEN status<>'queued' THEN updated_at END DESC,
+                    id ASC LIMIT ? OFFSET ?""", (limit, offset)).fetchall()
+            else:
+                order = "created_at ASC, id ASC" if status == "queued" else "updated_at DESC, id ASC"
+                rows = con.execute(
+                    f"SELECT * FROM jobs WHERE status=? ORDER BY {order} LIMIT ? OFFSET ?",
+                    (status, limit, offset)).fetchall()
+            items = [self._job_dict(row) for row in rows]
+            return {"items": items, "counts": counts, "total": total,
+                    "filtered_total": filtered_total, "status": status,
+                    "offset": offset, "limit": limit,
+                    "displayed": len(items),
+                    "truncated": offset + len(items) < filtered_total}
+
     def cancel_job(self, job_id: str) -> dict:
         with self._write() as con:
             row = self._require(con, "jobs", job_id)
