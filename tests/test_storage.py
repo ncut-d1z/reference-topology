@@ -76,6 +76,54 @@ class StorageTests(unittest.TestCase):
         self.assertEqual(len(ids), len(overview["items"]))
         self.assertLessEqual(len(ids), 100)
 
+    def test_status_filter_queries_full_queue_and_pages_without_duplicates(self):
+        asset = self.asset("filtered")
+        jobs = [self.store.create_job("parse", asset_id=asset["file_id"],
+                paper_id=asset["paper_id"], request_key=f"filter-request-{i}",
+                work_key=f"filter-work-{i}", input_data={"n": i})
+                for i in range(145)]
+        first = self.store.claim_job()
+        self.store.update_job(first["id"], lease_token=first["lease_token"], status="failed",
+                              error_code="test", error_message="intentional")
+        second = self.store.claim_job()
+        self.store.update_job(second["id"], lease_token=second["lease_token"], status="succeeded")
+        third = self.store.claim_job()
+        self.store.cancel_job(jobs[-1]["id"])
+
+        page1 = self.store.query_jobs(status="queued", limit=30, offset=0)
+        page2 = self.store.query_jobs(status="queued", limit=30, offset=30)
+        page3 = self.store.query_jobs(status="queued", limit=100, offset=60)
+        queued_ids = [entry["id"] for entry in page1["items"] + page2["items"] + page3["items"]]
+        self.assertEqual(page1["total"], 145)
+        self.assertEqual(page1["filtered_total"], 141)
+        self.assertEqual(page1["counts"]["queued"], 141)
+        self.assertEqual(page1["counts"]["running"], 1)
+        self.assertEqual(page1["counts"]["succeeded"], 1)
+        self.assertEqual(page1["counts"]["failed"], 1)
+        self.assertEqual(page1["counts"]["cancelled"], 1)
+        self.assertEqual(len(queued_ids), 141)
+        self.assertEqual(len(set(queued_ids)), 141)
+        self.assertNotIn(jobs[-1]["id"], queued_ids)
+        self.assertEqual(queued_ids[0], jobs[3]["id"])
+        self.assertFalse(page3["truncated"])
+
+        for status, expected in (("running", third["id"]), ("succeeded", second["id"]),
+                                  ("failed", first["id"]), ("cancelled", jobs[-1]["id"])):
+            filtered = self.store.query_jobs(status=status, limit=30)
+            self.assertEqual(filtered["filtered_total"], 1)
+            self.assertEqual([entry["id"] for entry in filtered["items"]], [expected])
+            self.assertEqual(filtered["total"], 145)
+        self.assertEqual(self.store.query_jobs("partial")["filtered_total"], 0)
+        self.assertEqual(self.store.query_jobs("interrupted")["items"], [])
+        all_jobs = self.store.query_jobs("all", limit=30)
+        self.assertEqual(all_jobs["filtered_total"], 145)
+        self.assertEqual(all_jobs["items"][0]["status"], "running")
+        self.assertEqual(len(all_jobs["items"]), 30)
+        self.assertTrue(all_jobs["truncated"])
+        self.assertEqual(self.store.query_jobs("queued", limit=30, offset=999)["items"], [])
+        with self.assertRaises(StoreError):
+            self.store.query_jobs("unknown")
+
     def test_content_deduplication_locations_and_replaced_path_are_separate(self):
         first = self.asset("one", content="same", uri="file:///a.pdf")
         duplicate = self.asset("two", content="same", uri="file:///b.pdf")
